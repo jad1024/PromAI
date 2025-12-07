@@ -1,5 +1,3 @@
-## 使用K8s部署时候将该文件创建为configmap，然后挂载到容器中
-# PromAI配置文件
 prometheus_url: "http://prometheus-k8s.monitoring.svc.cluster.local:9090"
 
 # 多数据源配置
@@ -931,7 +929,7 @@ metric_types:
 
   - type: "L7-采集层：监控数据采集状态"
     metrics:
-      - name: "大数据服务监控数据采集状态监控-已排除"
+      - name: "监控数据采集状态监控"
         description: "Exporter数据采集服务状态监控"
         query: >-
            up{job!~"hive.*|hadoop.*|hbase.*|spark.*|yarn.*|.*kafka.*"} 

@@ -7,27 +7,34 @@
 这是一个基于 Prometheus 的监控报告自动生成工具，可以自动收集、分析指标数据并生成可视化的 HTML 报告。该工具旨在简化监控数据的收集和展示过程，帮助运维人员快速了解系统状态。
 
 ## 报告样式
+
 ### 获取报告
+
 http://localhost:8091/getreport
 
 [报告样式](reports/inspection_report_20241214_131709.html)
 ![report](images/资源概览.png)
+
 <!-- ![report](images/image.png) -->
+
 ![report](images/image2.png)
 
 ## 服务健康看板
+
 ### 获取服务健康看板
+
 http://localhost:8091/status
 
 ![status](images/status.png)
 
-
 【监测报告】巡检报告巡检结果 ⚠️ 异常
 
 ### ⏰ 巡检时间
+
 2025-09-25 17:40:26
 
 ### 📊 分类巡检结果
+
 **✅Middleware 组件-mongo**：总10个，异常0个（严重0，警告0），正常10个
 **❌Middleware 组件-mysql**：总6个，异常1个（严重1，警告0），正常5个
 **✅Middleware 组件-pg**：总0个，异常0个（严重0，警告0），正常0个
@@ -39,6 +46,7 @@ http://localhost:8091/status
 **⚠️监控组件采集状态**：总254个，异常254个（严重0，警告254），正常0个
 
 ### 📈 整体统计
+
 **总指标数**：1664个
 **异常指标**：557个（严重24个，警告533个）
 **正常指标**：1107个
@@ -105,17 +113,17 @@ metric_types:
 - `labels`: 标签别名
 - `threshold_type`: 阈值比较方式: "greater", "greater_equal", "less", "less_equal", "equal", "not_equal"
 
-    `greater`: 当值大于阈值时告警 (例如：CPU使用率 > 80% 告警)
+  `greater`: 当值大于阈值时告警 (例如：CPU使用率 > 80% 告警)
 
-    `greater_equal`: 当值大于等于阈值时告警 (例如：CPU使用率 >= 80% 告警)
+  `greater_equal`: 当值大于等于阈值时告警 (例如：CPU使用率 >= 80% 告警)
 
-    `less`: 当值小于阈值时告警 (例如：可用节点数 < 3 告警)
+  `less`: 当值小于阈值时告警 (例如：可用节点数 < 3 告警)
 
-    `less_equal`: 当值小于等于阈值时告警 (例如：可用节点数 <= 3 告警)
+  `less_equal`: 当值小于等于阈值时告警 (例如：可用节点数 <= 3 告警)
 
-    `equal`: 值必须等于阈值才正常 (例如：版本号必须匹配)
+  `equal`: 值必须等于阈值才正常 (例如：版本号必须匹配)
 
-    `not_equal`: 值不等于阈值才正常 (例如：版本号不匹配时告警)
+  `not_equal`: 值不等于阈值才正常 (例如：版本号不匹配时告警)
 - `threshold_status`: 阈值状态: "normal", "critical" 根据阈值类型不同，告警状态也不同
 
 ## 快速开始
@@ -177,7 +185,7 @@ go build -o PromAI main.go
 
 ### 多数据源使用
 
-支持通过URL参数`datasource`动态切换不同的Prometheus集群：
+支持通过URL参数 `datasource`动态切换不同的Prometheus集群：
 
 1. 在配置文件中配置多个数据源：
 
@@ -225,26 +233,34 @@ http://localhost:8091/api/promai/getreport
 # 项目特色
 
 ## 🎯 智能告警系统
+
 支持多种阈值比较方式，适应不同监控场景需求：
+
 - 数值范围监控（CPU、内存使用率）
 - 计数监控（可用节点数、连接数）
 - 精确匹配监控（版本号、状态检查）
 
 ## 📊 可视化报告
+
 自动生成包含统计信息、趋势图表和详细数据的HTML报告：
+
 - 概览统计卡片
 - 资源使用情况图表
 - 按状态筛选的数据表格
 - 响应式设计，支持各种设备
 
 ## 🔄 实时状态监控
+
 提供服务健康状态看板，实时显示：
+
 - 各类别巡检结果统计
 - 异常指标详情
 - 总体健康度评估
 
 ## 🔧 灵活配置系统
+
 支持YAML配置文件，可自定义：
+
 - Prometheus数据源
 - 监控指标类型
 - 阈值和告警规则
@@ -257,6 +273,7 @@ http://localhost:8091/api/promai/getreport
 ## 贡献者
 
 <!-- readme: collaborators,contributors -start -->
+
 <table>
 <tr>
     <td align="center">
@@ -305,10 +322,13 @@ http://localhost:8091/api/promai/getreport
 <!-- readme: collaborators,contributors -end -->
 
 ## 联系我们
+
 微信扫码添加我为好友，备注“PromAI”，即可加入PromAI交流群。
 微信号：Kubehan
+
 微信公众号：云原生知识栈
 ![1764516172438](image/README/1764516172438.png)
+
 ## 许可证
 
 该项目采用 MIT 许可证，详细信息请查看 LICENSE 文件。
