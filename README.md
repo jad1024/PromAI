@@ -255,7 +255,6 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
 ## 贡献者
 
 <!-- readme: collaborators,contributors -start -->
-
 <table>
 <tr>
     <td align="center">
