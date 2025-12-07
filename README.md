@@ -10,7 +10,7 @@
 
 ### 获取报告
 
-http://localhost:8091/getreport
+http://localhost:8091/api/promai/getreport
 
 [报告样式](reports/inspection_report_20241214_131709.html)
 ![report](images/资源概览.png)
@@ -23,37 +23,14 @@ http://localhost:8091/getreport
 
 ### 获取服务健康看板
 
-http://localhost:8091/status
+http://localhost:8091/api/promai/status 
+
 
 ![status](images/status.png)
 
-【监测报告】巡检报告巡检结果 ⚠️ 异常
+![机器人报告](image/wechat_article_preview/1764515543801.png)
 
-### ⏰ 巡检时间
 
-2025-09-25 17:40:26
-
-### 📊 分类巡检结果
-
-**✅Middleware 组件-mongo**：总10个，异常0个（严重0，警告0），正常10个
-**❌Middleware 组件-mysql**：总6个，异常1个（严重1，警告0），正常5个
-**✅Middleware 组件-pg**：总0个，异常0个（严重0，警告0），正常0个
-**✅Middleware 组件-redis**：总0个，异常0个（严重0，警告0），正常0个
-**❌PaaS平台巡检**：总963个，异常37个（严重8，警告29），正常926个
-**❌基础资源使用情况**：总420个，异常265个（严重15，警告250），正常155个
-**✅接入层**：总7个，异常0个（严重0，警告0），正常7个
-**✅服务/应用**：总4个，异常0个（严重0，警告0），正常4个
-**⚠️监控组件采集状态**：总254个，异常254个（严重0，警告254），正常0个
-
-### 📈 整体统计
-
-**总指标数**：1664个
-**异常指标**：557个（严重24个，警告533个）
-**正常指标**：1107个
-
-📋[点击查看完整报告](http://0.0.0.0:9099/api/promai/reports/inspection_report_20250925_174025.html)
-
-⏰ 生成时间：2025-09-25 17:40:26
 
 ## 功能特点
 
@@ -165,6 +142,8 @@ docker run -d --name PromAI -p 8091:8091 kubehan/promai:latest
 ### Kubernetes 部署
 
 ```bash
+kubectl create namespace promai
+kubectl create configmap config --from-file=config/config.yaml -n promai
 kubectl apply -f deploy/deployment.yaml
 ```
 
@@ -180,7 +159,7 @@ kubectl apply -f deploy/deployment.yaml
 
 ```bash
 go build -o PromAI main.go
-./PromAI -config config/config.yaml
+./PromAI -config config/config.yaml -port :8091
 ```
 
 ### 多数据源使用
@@ -213,6 +192,9 @@ http://localhost:8091/api/promai/status?datasource=cluster1
 
 # 不带datasource参数时使用默认的prometheus_url
 http://localhost:8091/api/promai/getreport
+
+#自定义数据源
+http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.example.com
 ```
 
 # Prometheus Automated Inspection 已实现功能
