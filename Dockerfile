@@ -10,6 +10,8 @@ LABEL version="1.0" \
       description="Prometheus Automated Inspection" \
       maintainer="Kubehan"
 WORKDIR /app
+ENV TZ=Asia/Shanghai
+RUN apk update && apk add --no-cache tzdata && ln -sf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY --from=builder /build/PromAI /app/
 COPY --from=builder /build/config /app/config/
 COPY --from=builder /build/outputs /app/outputs/

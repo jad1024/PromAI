@@ -47,8 +47,8 @@ func NewCollectorWithURL(client PrometheusAPI, config *config.Config, prometheus
 }
 
 // UpdatePrometheusURL 更新Prometheus URL和客户端
-func (c *Collector) UpdatePrometheusURL(url string) error {
-	client, err := prometheus.NewClient(url)
+func (c *Collector) UpdatePrometheusURL(url,username,password string) error {
+	client, err := prometheus.NewClient(url,username,password)
 	if err != nil {
 		return fmt.Errorf("creating prometheus client: %w", err)
 	}
