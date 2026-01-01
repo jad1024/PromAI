@@ -1,9 +1,13 @@
 prometheus_url: "http://prometheus-k8s.monitoring.svc.cluster.local:9090"
+prometheus_username: "admin"  # 无鉴权可不填
+prometheus_password: "admin"  # 无鉴权可不填
 
 # 多数据源配置
 data_sources:
   - name: "cluster1"
     url: "http://prometheus.k8s.monitoring.kubehan.cn"
+    username: ""
+    password: ""
   - name: "cluster2"
     url: "http://prometheus.monitoring.kubehan.cn"
   - name: "test-cluster"

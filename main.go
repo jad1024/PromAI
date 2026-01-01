@@ -43,6 +43,8 @@ func loadConfig(path string) (*config.Config, error) {
 	if envPrometheusURL := os.Getenv("PROMETHEUS_URL"); envPrometheusURL != "" {
 		log.Printf("使用环境变量中的 Prometheus URL: %s", envPrometheusURL)
 		config.PrometheusURL = envPrometheusURL
+		config.PrometheusUsername = os.Getenv("PROMETHEUS_USERNAME")
+		config.PrometheusPassword = os.Getenv("PROMETHEUS_PASSWORD")
 	} else {
 		log.Printf("使用配置文件中的 Prometheus URL: %s", config.PrometheusURL)
 	}
@@ -56,7 +58,7 @@ func setup(configPath string) (*prometheus.Client, *config.Config, error) {
 		return nil, nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	client, err := prometheus.NewClient(config.PrometheusURL)
+	client, err := prometheus.NewClient(config.PrometheusURL, config.PrometheusUsername, config.PrometheusPassword)
 	if err != nil {
 		return nil, nil, fmt.Errorf("initializing Prometheus client: %w", err)
 	}
@@ -284,6 +286,8 @@ func makeReportHandler(collector *metrics.Collector, config *config.Config) http
 		// 获取datasource参数 - 使用多种方法确保获取到正确的值
 		datasource := r.URL.Query().Get("datasource")
 		prometheusURL := ""
+		prometheusUsername := ""
+		prometheusPassword := ""
 
 		// 额外的调试信息
 		log.Printf("[DEBUG] 收到的完整查询参数RawQuery: %s", r.URL.RawQuery)
@@ -322,6 +326,8 @@ func makeReportHandler(collector *metrics.Collector, config *config.Config) http
 					log.Printf("[DEBUG] 检查数据源: %s -> %s", ds.Name, ds.URL)
 					if ds.Name == datasource {
 						prometheusURL = ds.URL
+						prometheusUsername = ds.UserName
+						prometheusPassword = ds.Password
 						log.Printf("[DEBUG] 找到匹配的数据源: %s -> %s", ds.Name, ds.URL)
 						break
 					}
@@ -356,7 +362,7 @@ func makeReportHandler(collector *metrics.Collector, config *config.Config) http
 		if datasource != "" {
 			// 创建新的Prometheus客户端
 			log.Printf("[DEBUG] 创建自定义Prometheus客户端，URL: %s", prometheusURL)
-			client, err := prometheus.NewClient(prometheusURL)
+			client, err := prometheus.NewClient(prometheusURL, prometheusUsername, prometheusPassword)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Failed to create Prometheus client for datasource '%s': %v", datasource, err), http.StatusInternalServerError)
 				return
@@ -473,6 +479,8 @@ func makeStatusHandler(client metrics.PrometheusAPI, config *config.Config) http
 		// 获取datasource参数
 		datasource := r.URL.Query().Get("datasource")
 		prometheusURL := ""
+		prometheusUsername := ""
+		prometheusPassword := ""
 		var prometheusClient metrics.PrometheusAPI
 
 		if datasource != "" {
@@ -484,6 +492,8 @@ func makeStatusHandler(client metrics.PrometheusAPI, config *config.Config) http
 				for _, ds := range config.DataSources {
 					if ds.Name == datasource {
 						prometheusURL = ds.URL
+						prometheusUsername = ds.UserName
+						prometheusPassword = ds.Password
 						break
 					}
 				}
@@ -494,7 +504,7 @@ func makeStatusHandler(client metrics.PrometheusAPI, config *config.Config) http
 			}
 
 			// 创建新的Prometheus客户端
-			newClient, err := prometheus.NewClient(prometheusURL)
+			newClient, err := prometheus.NewClient(prometheusURL, prometheusUsername, prometheusPassword)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Failed to create Prometheus client for datasource '%s': %v", datasource, err), http.StatusInternalServerError)
 				return
