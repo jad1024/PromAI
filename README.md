@@ -272,6 +272,13 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/ghostelement">
+            <img src="https://avatars.githubusercontent.com/u/77783267?v=4" width="100;" alt="ghostelement"/>
+            <br />
+            <sub><b>ghostelement</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/KingsBa">
             <img src="https://avatars.githubusercontent.com/u/247204263?v=4" width="100;" alt="KingsBa"/>
             <br />
@@ -291,7 +298,8 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
             <br />
             <sub><b>Wilson_wu</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/liaofan-0710">
             <img src="https://avatars.githubusercontent.com/u/59794905?v=4" width="100;" alt="liaofan-0710"/>
