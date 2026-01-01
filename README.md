@@ -275,7 +275,7 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         <a href="https://github.com/ghostelement">
             <img src="https://avatars.githubusercontent.com/u/77783267?v=4" width="100;" alt="ghostelement"/>
             <br />
-            <sub><b>ghostelement</b></sub>
+            <sub><b>Ghostelement</b></sub>
         </a>
     </td>
     <td align="center">
