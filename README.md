@@ -293,13 +293,20 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/cloud-chengjia">
+            <img src="https://avatars.githubusercontent.com/u/95220692?v=4" width="100;" alt="cloud-chengjia"/>
+            <br />
+            <sub><b>cloud-chengjia</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
         <a href="https://github.com/wevsmy">
             <img src="https://avatars.githubusercontent.com/u/26675374?v=4" width="100;" alt="wevsmy"/>
             <br />
             <sub><b>Wilson_wu</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/liaofan-0710">
             <img src="https://avatars.githubusercontent.com/u/59794905?v=4" width="100;" alt="liaofan-0710"/>
