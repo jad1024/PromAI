@@ -296,7 +296,7 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         <a href="https://github.com/cloud-chengjia">
             <img src="https://avatars.githubusercontent.com/u/95220692?v=4" width="100;" alt="cloud-chengjia"/>
             <br />
-            <sub><b>cloud-chengjia</b></sub>
+            <sub><b>Cloud-chengjia</b></sub>
         </a>
     </td></tr>
 <tr>
