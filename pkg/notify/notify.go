@@ -11,11 +11,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"net/smtp"
 	"net/url"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -150,113 +148,110 @@ func SendDingtalk(config DingtalkConfig, reportPath string, projectName string, 
 }
 
 // SendDingtalkWithContext 发送钉钉通知（支持动态URL）
+// SendDingtalkWithContext 发送钉钉通知（适配钉钉Markdown换行规则）
 func SendDingtalkWithContext(ctx context.Context, config DingtalkConfig, reportPath string, projectName string, Datasource string, alertSummary AlertSummary) error {
 	if !config.Enabled {
 		log.Printf("钉钉通知未启用")
 		return nil
 	}
 	log.Printf("开始发送钉钉通知...")
+
 	// 计算时间戳和签名
 	timestamp := time.Now().UnixMilli()
 	sign := calculateDingtalkSign(timestamp, config.Secret)
 	webhook := fmt.Sprintf("%s&timestamp=%d&sign=%s", config.Webhook, timestamp, sign)
 
 	log.Printf("准备发送请求到 webhook: %s", webhook)
-	// 创建multipart表单
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
 
-	// 添加文件
-	file, err := os.Open(reportPath)
-	if err != nil {
-		log.Printf("打开文件失败: %v", err)
-		return fmt.Errorf("打开文件失败: %v", err)
-	}
-	defer file.Close()
-
-	part, err := writer.CreateFormFile("file", filepath.Base(reportPath))
-	if err != nil {
-		log.Printf("创建表单文件失败: %v", err)
-		return fmt.Errorf("创建表单文件失败: %v", err)
+	// 获取分类巡检汇总数据
+	var typeSummaries []TypeAlertSummary
+	if data, ok := ctx.Value("report_data").(report.ReportData); ok {
+		typeSummaries = CalculateTypeAlertSummary(data)
+		log.Printf("从报告数据中计算出分类汇总，共%d个分类", len(typeSummaries))
+	} else {
+		log.Printf("未找到报告数据，使用空分类汇总")
+		typeSummaries = []TypeAlertSummary{}
 	}
 
-	fileContent, err := os.ReadFile(reportPath)
-	if err != nil {
-		log.Printf("读取文件失败: %v", err)
-		return fmt.Errorf("读取文件失败: %v", err)
+	// 构建分类巡检结果文本（用钉钉支持的<br/>换行，每个条目单独一行）
+	typeSummaryText := ""
+	if len(typeSummaries) > 0 {
+		for _, summary := range typeSummaries {
+			var typeStatus string
+			if summary.CriticalCount > 0 {
+				typeStatus = "❌" // 严重异常
+			} else if summary.WarningCount > 0 {
+				typeStatus = "⚠️" // 警告
+			} else {
+				typeStatus = "✅" // 正常
+			}
+			// 关键：用<br/>替代\n，适配钉钉Markdown换行
+			typeSummaryText += fmt.Sprintf("%s%s：总%d个，异常%d个（严重%d，警告%d），正常%d个<br/>",
+				typeStatus, summary.Type, summary.TotalMetrics,
+				summary.CriticalCount+summary.WarningCount, summary.CriticalCount, summary.WarningCount, summary.NormalCount)
+		}
+	} else {
+		typeSummaryText = "暂无分类数据<br/>"
 	}
-	part.Write(fileContent)
 
 	// 生成报告的访问链接
 	reportFileName := filepath.Base(reportPath)
-
-	// 尝试从context中获取HTTP请求对象，用于动态URL生成
 	var reportLink string
 	if r, ok := ctx.Value("http_request").(*http.Request); ok {
-		// 打印调试信息
-		log.Printf("调试信息: r.Host = %s", r.Host)
-		log.Printf("调试信息: X-Forwarded-Host = %s", r.Header.Get("X-Forwarded-Host"))
-		log.Printf("调试信息: X-Forwarded-Proto = %s", r.Header.Get("X-Forwarded-Proto"))
-		log.Printf("调试信息: TLS = %v", r.TLS != nil)
-
-		// 使用动态URL生成
 		reportLink = utils.GetReportURL(r, reportFileName)
 		log.Printf("使用动态URL生成报告链接: %s", reportLink)
-		log.Printf("最终生成的 reportLink = %s", reportLink)
 	} else {
-		// 回退到配置的静态URL
 		reportLink = fmt.Sprintf("%s/api/promai/reports/%s", config.ReportURL, reportFileName)
 		log.Printf("使用配置的静态URL生成报告链接: %s", reportLink)
-		log.Printf("最终生成的 reportLink = %s", reportLink)
 	}
-	fmt.Printf("报告链接: %s", reportLink)
 
-	// 添加消息内容
+	// 告警状态
 	alertStatus := "✅ 正常"
 	if alertSummary.TotalAlerts > 0 {
 		alertStatus = "⚠️ 异常"
 	}
 
+	// 构建钉钉专属Markdown模板（移除>缩进，用<br/>换行）
 	messageContent := map[string]interface{}{
 		"msgtype": "markdown",
 		"markdown": map[string]string{
 			"title": "巡检报告",
-			"text": fmt.Sprintf("## 🔍 %s 巡检报告已生成 %s\n\n"+
-				"### ⏰ 生成时间\n"+
-				"> %s\n\n"+
-				"### 🚨 告警汇总\n"+
-				"**总体状态**：%s\n"+
-				"**总指标数**：%d\n"+
-				"**异常指标**：%d\n"+
-				"  🔴 严重告警：%d\n"+
-				"  🟡 警告告警：%d\n"+
-				"**正常指标**：%d\n\n"+
-				"### 📄 报告详情\n"+
-				"**文件名**：`%s`\n"+
+			"text": fmt.Sprintf("## 🔍 巡检报告 %s\n\n"+
+				"### ⌚ 巡检时间\n"+
+				"%s\n\n"+
+				"### 📊 分类巡检结果\n"+
+				"%s\n\n"+
+				"### 📈 整体统计\n"+
+				"**总指标数**：%d个<br/>"+
+				"**异常指标**：%d个（严重%d个，警告%d个）<br/>"+
+				"**正常指标**：%d个\n\n"+
+				"### 📋 点击查看完整报告\n"+
+				"**文件名**：`%s`<br/>"+
 				"**访问链接**：[点击查看报告](%s)\n\n"+
 				"---\n"+
-				"💡 请登录环境查看完整报告内容",
-				projectName,
+				"💡 请登录环境查看完整报告内容<br/>"+
+				"⏰ 生成时间：%s",
 				alertStatus,
-				time.Now().Format("2006-01-02 15:04:05"),
-				alertStatus,
+				time.Now().Format("2006-01-02 10:08:30"), // 匹配截图时间格式
+				typeSummaryText,                          // 带<br/>的分类文本
 				alertSummary.TotalMetrics,
 				alertSummary.TotalAlerts,
 				alertSummary.CriticalAlerts,
 				alertSummary.WarningAlerts,
 				alertSummary.NormalMetrics,
 				reportFileName,
-				reportLink),
+				reportLink,
+				time.Now().Format("2006-01-02 10:08:30")),
 		},
 	}
 
+	// 发送请求
 	jsonData, err := json.Marshal(messageContent)
 	if err != nil {
 		log.Printf("JSON编码失败: %v", err)
 		return fmt.Errorf("JSON编码失败: %v", err)
 	}
 
-	// 发送请求
 	req, err := http.NewRequest("POST", webhook, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("创建请求失败: %v", err)
