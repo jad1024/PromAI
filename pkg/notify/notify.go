@@ -232,8 +232,8 @@ func SendDingtalkWithContext(ctx context.Context, config DingtalkConfig, reportP
 				"💡 请登录环境查看完整报告内容<br/>"+
 				"⏰ 生成时间：%s",
 				alertStatus,
-				time.Now().Format("2006-01-02 10:08:30"), // 匹配截图时间格式
-				typeSummaryText,                          // 带<br/>的分类文本
+				time.Now().Format("2006-01-02 15:04:05"),
+				typeSummaryText, // 带<br/>的分类文本
 				alertSummary.TotalMetrics,
 				alertSummary.TotalAlerts,
 				alertSummary.CriticalAlerts,
@@ -241,7 +241,7 @@ func SendDingtalkWithContext(ctx context.Context, config DingtalkConfig, reportP
 				alertSummary.NormalMetrics,
 				reportFileName,
 				reportLink,
-				time.Now().Format("2006-01-02 10:08:30")),
+				time.Now().Format("2006-01-02 15:04:05")),
 		},
 	}
 
