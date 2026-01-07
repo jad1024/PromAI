@@ -414,7 +414,9 @@ func makeReportHandler(collector *metrics.Collector, config *config.Config) http
 
 // sendNotifications 发送所有通知（兼容版本）
 func sendNotifications(config *config.Config, reportFilePath string, reportData *report.ReportData) {
-	sendNotificationsWithContext(context.Background(), config, reportFilePath, reportData)
+	// 创建包含报告数据的上下文
+	ctx := context.WithValue(context.Background(), "report_data", *reportData)
+	sendNotificationsWithContext(ctx, config, reportFilePath, reportData)
 }
 
 // sendNotificationsWithContext 发送所有通知（支持动态URL）
