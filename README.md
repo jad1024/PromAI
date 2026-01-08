@@ -265,6 +265,13 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/cloud-chengjia">
+            <img src="https://avatars.githubusercontent.com/u/95220692?v=4" width="100;" alt="cloud-chengjia"/>
+            <br />
+            <sub><b>Cloud-chengjia</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junlintianxiazhifulinzhongguo">
             <img src="https://avatars.githubusercontent.com/u/18591729?v=4" width="100;" alt="junlintianxiazhifulinzhongguo"/>
             <br />
@@ -290,13 +297,6 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
             <img src="https://avatars.githubusercontent.com/u/34912508?v=4" width="100;" alt="liushiju"/>
             <br />
             <sub><b>Shiju Liu</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/cloud-chengjia">
-            <img src="https://avatars.githubusercontent.com/u/95220692?v=4" width="100;" alt="cloud-chengjia"/>
-            <br />
-            <sub><b>Cloud-chengjia</b></sub>
         </a>
     </td></tr>
 <tr>
