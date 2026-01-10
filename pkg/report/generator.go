@@ -49,6 +49,7 @@ type ReportData struct {
 	ChartData    map[string]template.JS
 	Project      string
 	Datasource   string
+	ReportUrl    string
 }
 
 func GetStatusText(status string) string {
