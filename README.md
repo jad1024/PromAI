@@ -265,6 +265,13 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/ghostelement">
+            <img src="https://avatars.githubusercontent.com/u/77783267?v=4" width="100;" alt="ghostelement"/>
+            <br />
+            <sub><b>Ghostelement</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/cloud-chengjia">
             <img src="https://avatars.githubusercontent.com/u/95220692?v=4" width="100;" alt="cloud-chengjia"/>
             <br />
@@ -276,13 +283,6 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
             <img src="https://avatars.githubusercontent.com/u/18591729?v=4" width="100;" alt="junlintianxiazhifulinzhongguo"/>
             <br />
             <sub><b>Junlintianxiazhifulinzhongguo</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/ghostelement">
-            <img src="https://avatars.githubusercontent.com/u/77783267?v=4" width="100;" alt="ghostelement"/>
-            <br />
-            <sub><b>Ghostelement</b></sub>
         </a>
     </td>
     <td align="center">
