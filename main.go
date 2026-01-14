@@ -261,6 +261,7 @@ func executeInspectionWithProgress(collector *metrics.Collector, config *config.
 		taskmanager.GlobalTaskManager.FailStep(taskID, "生成巡检报告", err.Error())
 		return nil, fmt.Errorf("generating report: %w", err)
 	}
+	data.ReportUrl = reportFilePath
 
 	// 完成任务
 	taskmanager.GlobalTaskManager.CompleteTask(taskID, reportFilePath)
@@ -386,12 +387,7 @@ func makeReportHandler(collector *metrics.Collector, config *config.Config) http
 			return
 		}
 
-		reportFilePath, err := report.GenerateReport(*data)
-		if err != nil {
-			http.Error(w, "Failed to generate report", http.StatusInternalServerError)
-			log.Printf("Error generating report: %v", err)
-			return
-		}
+		reportFilePath := data.ReportUrl
 
 		// 创建包含HTTP请求和报告数据的context，用于动态URL生成和分类汇总
 		ctx := context.WithValue(r.Context(), "http_request", r)
