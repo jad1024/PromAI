@@ -48,6 +48,15 @@ type WeChatWorkConfig struct {
 	ReportURL string `yaml:"report_url"`
 }
 
+type FeishuConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	Webhook    string `yaml:"webhook"`
+	Secret     string `yaml:"secret"`
+	ReportURL  string `yaml:"report_url"`
+	Timeout    int    `yaml:"timeout"`
+	VerifySign bool   `yaml:"verify_sign"`
+}
+
 type AlertSummary struct {
 	TotalAlerts    int
 	CriticalAlerts int
@@ -133,6 +142,148 @@ func CalculateTypeAlertSummary(data report.ReportData) []TypeAlertSummary {
 	}
 
 	return result
+}
+
+func SendFeishu(config FeishuConfig, reportPath string, projectName string, Datasource string, alertSummary AlertSummary) error {
+	return SendFeishuWithContext(context.Background(), config, reportPath, projectName, Datasource, alertSummary)
+}
+
+func SendFeishuWithContext(ctx context.Context, config FeishuConfig, reportPath string, projectName string, Datasource string, alertSummary AlertSummary) error {
+	if !config.Enabled {
+		log.Printf("飞书通知未启用")
+		return nil
+	}
+	log.Printf("开始发送飞书通知...")
+
+	var typeSummaries []TypeAlertSummary
+	if data, ok := ctx.Value("report_data").(report.ReportData); ok {
+		typeSummaries = CalculateTypeAlertSummary(data)
+		log.Printf("从报告数据中计算出分类汇总，共%d个分类", len(typeSummaries))
+	} else {
+		log.Printf("未找到报告数据，使用空分类汇总")
+		typeSummaries = []TypeAlertSummary{}
+	}
+	// 生成报告链接
+	reportFileName := filepath.Base(reportPath)
+	var reportLink string
+	if r, ok := ctx.Value("http_request").(*http.Request); ok {
+		reportLink = utils.GetReportURL(r, reportFileName)
+		log.Printf("使用动态URL生成报告链接: %s", reportLink)
+	} else {
+		reportLink = fmt.Sprintf("%s/api/promai/reports/%s", config.ReportURL, reportFileName)
+		log.Printf("使用配置的静态URL生成报告链接: %s", reportLink)
+	}
+
+	// 告警状态
+	alertStatus := "✅ 正常"
+	if alertSummary.TotalAlerts > 0 {
+		alertStatus = "⚠️ 异常"
+	}
+
+	// 构建文本内容
+	typeSummaryText := ""
+	if len(typeSummaries) > 0 {
+		for _, s := range typeSummaries {
+			status := "✅"
+			if s.CriticalCount > 0 {
+				status = "❌"
+			} else if s.WarningCount > 0 {
+				status = "⚠️"
+			}
+			typeSummaryText += fmt.Sprintf("%s%s：总%d个，异常%d个（严重%d，警告%d），正常%d个\n",
+				status, s.Type, s.TotalMetrics, s.CriticalCount+s.WarningCount, s.CriticalCount, s.WarningCount, s.NormalCount)
+		}
+	} else {
+		typeSummaryText = "暂无分类数据\n"
+	}
+
+	// 组装完整文本
+	text := fmt.Sprintf("【巡检报告】%s\n项目：%s\n数据源：%s\n时间：%s\n\n分类巡检结果：\n%s\n总体统计：总%d个，异常%d个（严重%d，警告%d），正常%d个\n\n报告文件：%s\n报告链接：%s\n",
+		alertStatus,
+		projectName,
+		Datasource,
+		time.Now().Format("2006-01-02 15:04:05"),
+		typeSummaryText,
+		alertSummary.TotalMetrics,
+		alertSummary.TotalAlerts,
+		alertSummary.CriticalAlerts,
+		alertSummary.WarningAlerts,
+		alertSummary.NormalMetrics,
+		reportFileName,
+		reportLink,
+	)
+
+	// 组装消息体（Feishu 富文本消息）
+	messageContent := map[string]interface{}{
+		"msg_type": "post",
+		"content": map[string]interface{}{
+			"post": map[string]interface{}{
+				"zh_cn": map[string]interface{}{
+					"title": "巡检报告",
+					"content": []interface{}{
+						[]interface{}{
+							map[string]interface{}{
+								"tag":  "text",
+								"text": text,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(messageContent)
+	if err != nil {
+		log.Printf("JSON编码失败: %v", err)
+		return fmt.Errorf("JSON编码失败: %v", err)
+	}
+
+	// 处理签名：如果启用了签名验证并且提供了 secret，则按飞书签名规则追加 timestamp/sign
+	webhook := config.Webhook
+	if config.VerifySign {
+		if config.Secret == "" {
+			log.Printf("启用签名校验，但未配置 secret，继续使用原始 webhook 发送")
+		} else {
+			timestamp := time.Now().UnixMilli()
+			sign := calculateDingtalkSign(timestamp, config.Secret)
+			// 飞书 webhook 在末尾追加 timestamp & sign（与钉钉类似）
+			webhook = fmt.Sprintf("%s&timestamp=%d&sign=%s", config.Webhook, timestamp, sign)
+		}
+	}
+
+	// HTTP 客户端，支持超时配置
+	client := &http.Client{}
+	if config.Timeout > 0 {
+		client.Timeout = time.Duration(config.Timeout) * time.Second
+	} else {
+		client.Timeout = 5 * time.Second
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", webhook, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("创建请求失败: %v", err)
+		return fmt.Errorf("创建请求失败: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	log.Printf("准备发送请求到 webhook: %s", webhook)
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("发送请求失败: %v", err)
+		return fmt.Errorf("发送请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("飞书响应状态码: %d, 响应内容: %s", resp.StatusCode, string(respBody))
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("飞书发送失败，状态码: %d", resp.StatusCode)
+	}
+
+	log.Printf("飞书通知发送成功")
+	return nil
 }
 
 // config/config.yaml 中 dingtalk 配置

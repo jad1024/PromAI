@@ -190,6 +190,9 @@ func main() {
 	if config.Notifications.WeChatWork.Enabled {
 		log.Printf("  企业微信: 已启用")
 	}
+	if config.Notifications.Feishu.Enabled {
+		log.Printf("  企业微信: 已启用")
+	}
 	log.Printf("==========================================")
 	log.Printf("服务器正在运行...")
 
@@ -440,6 +443,13 @@ func sendNotificationsWithContext(ctx context.Context, config *config.Config, re
 		log.Printf("发送企业微信消息")
 		if err := notify.SendWeChatWorkWithContext(ctx, config.Notifications.WeChatWork, reportFilePath, config.ProjectName, reportData.Datasource, alertSummary); err != nil {
 			log.Printf("发送企业微信消息失败: %v", err)
+		}
+	}
+
+	if config.Notifications.Feishu.Enabled {
+		log.Printf("发送飞书消息")
+		if err := notify.SendFeishuWithContext(ctx, config.Notifications.Feishu, reportFilePath, config.ProjectName, reportData.Datasource, alertSummary); err != nil {
+			log.Printf("发送飞书消息失败: %v", err)
 		}
 	}
 
