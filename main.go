@@ -191,7 +191,7 @@ func main() {
 		log.Printf("  企业微信: 已启用")
 	}
 	if config.Notifications.Feishu.Enabled {
-		log.Printf("  企业微信: 已启用")
+		log.Printf("  飞书通知: 已启用")
 	}
 	log.Printf("==========================================")
 	log.Printf("服务器正在运行...")
