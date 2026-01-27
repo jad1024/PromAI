@@ -289,7 +289,7 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         <a href="https://github.com/zhuhao22">
             <img src="https://avatars.githubusercontent.com/u/110542139?v=4" width="100;" alt="zhuhao22"/>
             <br />
-            <sub><b>zhuhao22</b></sub>
+            <sub><b>Zhuhao22</b></sub>
         </a>
     </td>
     <td align="center">
