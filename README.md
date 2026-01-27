@@ -286,20 +286,27 @@ http://localhost:8091/api/promai/getreport?datasource=http://prometheus.test.exa
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/zhuhao22">
+            <img src="https://avatars.githubusercontent.com/u/110542139?v=4" width="100;" alt="zhuhao22"/>
+            <br />
+            <sub><b>zhuhao22</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/KingsBa">
             <img src="https://avatars.githubusercontent.com/u/247204263?v=4" width="100;" alt="KingsBa"/>
             <br />
             <sub><b>KingsBa</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/liushiju">
             <img src="https://avatars.githubusercontent.com/u/34912508?v=4" width="100;" alt="liushiju"/>
             <br />
             <sub><b>Shiju Liu</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/wevsmy">
             <img src="https://avatars.githubusercontent.com/u/26675374?v=4" width="100;" alt="wevsmy"/>
