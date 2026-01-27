@@ -19,6 +19,7 @@ type Config struct {
 		Dingtalk   notify.DingtalkConfig   `yaml:"dingtalk"`
 		Email      notify.EmailConfig      `yaml:"email"`
 		WeChatWork notify.WeChatWorkConfig `yaml:"wechat_work"`
+		Feishu     notify.FeishuConfig     `yaml:"feishu"`
 	} `yaml:"notifications"`
 	Port string `yaml:"port"`
 }
