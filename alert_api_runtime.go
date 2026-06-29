@@ -32,7 +32,8 @@ func (a *AdminAPI) handleAlertInstances(w http.ResponseWriter, r *http.Request) 
 	q := database.DB.Model(&database.AlertInstance{})
 	params := r.URL.Query()
 	if v := params.Get("state"); v != "" {
-		q = q.Where("state = ?", v)
+		states := strings.Split(v, ",")
+		q = q.Where("state IN ?", states)
 	}
 	if v := params.Get("severity"); v != "" {
 		q = q.Where("severity = ?", v)

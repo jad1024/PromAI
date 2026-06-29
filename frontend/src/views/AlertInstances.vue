@@ -47,7 +47,8 @@
             <el-option label="警告 warning" value="warning" />
             <el-option label="提醒 info" value="info" />
           </el-select>
-          <el-select v-model="filters.state" placeholder="全部状态" clearable style="width: 120px;" @change="fetchData">
+          <el-select v-model="filters.state" placeholder="全部状态" clearable style="width: 140px;" @change="fetchData">
+            <el-option label="活跃 (pending+firing)" value="pending,firing" />
             <el-option label="firing" value="firing" />
             <el-option label="pending" value="pending" />
             <el-option label="resolved" value="resolved" />
@@ -276,7 +277,7 @@ const page = ref(1)
 const pageSize = ref(50)
 const includeMasked = ref(false)
 const filters = ref<{ severity: string; state: string; datasource_id: number | ''; keyword: string }>({
-  severity: '', state: '', datasource_id: '', keyword: '',
+  severity: '', state: 'pending,firing', datasource_id: '', keyword: '',
 })
 
 const detailDrawer = ref(false)
