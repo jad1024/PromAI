@@ -368,6 +368,7 @@ type AlertRoute struct {
 	GroupWait           string `gorm:"size:20;default:30s" json:"group_wait"`
 	GroupInterval       string `gorm:"size:20;default:5m" json:"group_interval"`
 	RepeatInterval      string `gorm:"size:20;default:4h" json:"repeat_interval"`
+	ThrottleWindow      string `gorm:"size:20;default:''" json:"throttle_window"`
 	NotifyChannelIDsRaw string `gorm:"column:notify_channel_ids;type:text" json:"-"`
 	NotifyChannelIDs    []uint `gorm:"-" json:"notify_channel_ids,omitempty"`
 	Priority            int    `gorm:"default:0;index" json:"priority"`

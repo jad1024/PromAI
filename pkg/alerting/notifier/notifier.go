@@ -156,6 +156,10 @@ func (n *Notifier) SendGroup(ctx context.Context, group *database.AlertGroup, in
 	}
 	log.Printf("[Notify] · group=%s rule=%d 启用通道: %v", gkShort, ruleID, chanNames)
 
+	// 解析限流窗口：throttle_window > repeat_interval > 默认
+	throttleWindow := resolveThrottleWindow(&route, &rule, n.throttleWindow)
+	log.Printf("[Notify] · group=%s rule=%d 限流窗口=%v", gkShort, ruleID, throttleWindow)
+
 	var firstErr error
 	var attempts []chAttempt
 	for _, ch := range channels {
@@ -167,10 +171,10 @@ func (n *Notifier) SendGroup(ctx context.Context, group *database.AlertGroup, in
 
 		hash := alerting.PayloadHash(ch.ID, rendered.markdown)
 		content := rendered.markdown
-		if n.shouldThrottle(hash) {
-			log.Printf("[Notify] ⊘ group=%s rule=%d channel=%s/#%d throttled (30s 窗口内重复)",
-				gkShort, ruleID, ch.ChannelType, ch.ID)
-			n.logSend(group, instances, &ch, hash, "throttled", "30 秒内消息内容未变化，已自动去重", content)
+		if n.shouldThrottle(hash, throttleWindow) {
+			log.Printf("[Notify] ⊘ group=%s rule=%d channel=%s/#%d throttled (%v 内重复)",
+				gkShort, ruleID, ch.ChannelType, ch.ID, throttleWindow)
+			n.logSend(group, instances, &ch, hash, "throttled", fmt.Sprintf("%v 内消息内容未变化，已自动去重", throttleWindow), content)
 			attempts = append(attempts, chAttempt{ch, "throttled"})
 			continue
 		}
@@ -256,6 +260,8 @@ func (n *Notifier) SendResolvedGroup(ctx context.Context, group *database.AlertG
 		return nil
 	}
 
+	throttleWindow := resolveThrottleWindow(&route, &rule, n.throttleWindow)
+
 	var firstErr error
 	var attempts []chAttempt
 	for _, ch := range channels {
@@ -267,10 +273,10 @@ func (n *Notifier) SendResolvedGroup(ctx context.Context, group *database.AlertG
 
 		hash := alerting.PayloadHash(ch.ID, rendered.markdown)
 		content := rendered.markdown
-		if n.shouldThrottle(hash) {
-			log.Printf("[Notify] ⊘ group=%s rule=%d (resolved) channel=%s/#%d throttled",
-				gkShort, ruleID, ch.ChannelType, ch.ID)
-			n.logSend(group, instances, &ch, hash, "throttled", "30 秒内消息内容未变化，已自动去重", content)
+		if n.shouldThrottle(hash, throttleWindow) {
+			log.Printf("[Notify] ⊘ group=%s rule=%d (resolved) channel=%s/#%d throttled (%v 内重复)",
+				gkShort, ruleID, ch.ChannelType, ch.ID, throttleWindow)
+			n.logSend(group, instances, &ch, hash, "throttled", fmt.Sprintf("%v 内消息内容未变化，已自动去重", throttleWindow), content)
 			continue
 		}
 		sendStart := time.Now()
@@ -295,16 +301,16 @@ func (n *Notifier) SendResolvedGroup(ctx context.Context, group *database.AlertG
 	return firstErr
 }
 
-func (n *Notifier) shouldThrottle(hash string) bool {
+func (n *Notifier) shouldThrottle(hash string, window time.Duration) bool {
 	if v, ok := n.recent.Load(hash); ok {
-		if t, ok := v.(time.Time); ok && time.Since(t) < n.throttleWindow {
+		if t, ok := v.(time.Time); ok && time.Since(t) < window {
 			return true
 		}
 	}
 	n.recent.Store(hash, time.Now())
 	// 简单清理：随机扫一遍过期项
+	cutoff := time.Now().Add(-window * 4)
 	if time.Now().UnixNano()%32 == 0 {
-		cutoff := time.Now().Add(-n.throttleWindow * 4)
 		n.recent.Range(func(k, v interface{}) bool {
 			if t, ok := v.(time.Time); ok && t.Before(cutoff) {
 				n.recent.Delete(k)
@@ -313,6 +319,29 @@ func (n *Notifier) shouldThrottle(hash string) bool {
 		})
 	}
 	return false
+}
+
+// resolveThrottleWindow 从路由/规则计算出限流窗口，默认对齐 repeat_interval
+func resolveThrottleWindow(route *database.AlertRoute, rule *database.AlertRule, def time.Duration) time.Duration {
+	// 1) 路由上的 throttle_window 显式设置
+	if route != nil && route.ThrottleWindow != "" {
+		if d, err := time.ParseDuration(route.ThrottleWindow); err == nil && d > 0 {
+			return d
+		}
+	}
+	// 2) 规则的 repeat_interval
+	if rule != nil && rule.RepeatInterval != "" {
+		if d, err := time.ParseDuration(rule.RepeatInterval); err == nil && d > 0 {
+			return d
+		}
+	}
+	// 3) 路由的 repeat_interval
+	if route != nil && route.RepeatInterval != "" {
+		if d, err := time.ParseDuration(route.RepeatInterval); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
 }
 
 func (n *Notifier) logSend(group *database.AlertGroup, instances []database.AlertInstance, ch *database.NotificationChannel, payloadHash, status, errMsg, content string) {

@@ -20,6 +20,7 @@
         <el-table-column label="group_wait" width="100" prop="group_wait" />
         <el-table-column label="group_interval" width="110" prop="group_interval" />
         <el-table-column label="repeat_interval" width="110" prop="repeat_interval" />
+        <el-table-column label="限流窗口" width="110" prop="throttle_window" />
         <el-table-column label="continue" width="80" align="center"><template #default="{row}"><el-tag v-if="row.continue" size="small">on</el-tag></template></el-table-column>
         <el-table-column label="启用" width="70" align="center"><template #default="{row}"><el-switch :model-value="row.enabled" size="small" @change="toggle(row)" /></template></el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
@@ -36,6 +37,7 @@
           <el-col :span="8"><el-form-item label="group_wait"><el-input v-model="form.group_wait" placeholder="30s" /></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="group_interval"><el-input v-model="form.group_interval" placeholder="5m" /></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="repeat_interval"><el-input v-model="form.repeat_interval" placeholder="4h" /></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="限流窗口"><el-input v-model="form.throttle_window" placeholder="留空=repeat_interval" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="group_by"><el-input v-model="form.group_by_json" placeholder='["alertname","datasource_id"]' /></el-form-item>
         <el-form-item label="通知通道"><el-select v-model="form.notify_channel_ids" multiple placeholder="选择通道" style="width:100%;"><el-option v-for="ch in channels" :key="ch.id" :label="ch.name" :value="ch.id" /></el-select></el-form-item>

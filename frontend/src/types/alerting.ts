@@ -163,6 +163,7 @@ export interface AlertRoute {
   group_wait?: string
   group_interval?: string
   repeat_interval?: string
+  throttle_window?: string
   notify_channel_ids?: number[]
   priority?: number
   send_resolved?: boolean
