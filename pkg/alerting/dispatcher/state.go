@@ -490,10 +490,14 @@ func (sm *stateManager) applyRouting(t *trackedAlert, snap *store.RuleSnapshot) 
 		grp.State = "pending"
 		grp.SendCount = 0
 	}
-	groupInterval := parseDurationOr(route.GroupInterval, sm.d.cfg.DefaultGroupInterval)
-	if grp.NextNotifyAt == nil || grp.NextNotifyAt.After(now.Add(groupInterval)) {
-		next := now.Add(groupInterval)
-		grp.NextNotifyAt = &next
+	// 只有从未通知过的组才用 group_interval 拉近 next_notify_at；
+	// 已通知过的组由 dispatchPending 按 repeat_interval 调度，不应被每次 eval 覆盖。
+	if grp.SendCount == 0 {
+		groupInterval := parseDurationOr(route.GroupInterval, sm.d.cfg.DefaultGroupInterval)
+		if grp.NextNotifyAt == nil || grp.NextNotifyAt.After(now.Add(groupInterval)) {
+			next := now.Add(groupInterval)
+			grp.NextNotifyAt = &next
+		}
 	}
 	grp.AlertCount++
 	_ = database.DB.Save(&grp).Error

@@ -58,7 +58,8 @@ type Dispatcher struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 
-	cfg Config
+	cfg            Config
+	lastResetDate  string // YYYY-MM-DD，用于每日 send_count 重置
 }
 
 // Config dispatcher 配置
@@ -183,6 +184,17 @@ func (d *Dispatcher) dispatchLoop(ctx context.Context) {
 // dispatchPending 取出到期的分组，组装告警列表，下发通知
 func (d *Dispatcher) dispatchPending(ctx context.Context) {
 	now := time.Now()
+
+	// 每日 0 点重置所有分组的 send_count，避免达到 max_send_count 后永续停滞。
+	today := now.Format("2006-01-02")
+	if d.lastResetDate != today {
+		if d.lastResetDate != "" {
+			log.Printf("[Dispatch] 日期变更 %s → %s，重置所有分组 send_count=0", d.lastResetDate, today)
+			database.DB.Model(&database.AlertGroup{}).Where("send_count > 0").Update("send_count", 0)
+		}
+		d.lastResetDate = today
+	}
+
 	var groups []database.AlertGroup
 	if err := database.DB.
 		Where("next_notify_at IS NOT NULL AND next_notify_at <= ? AND state IN ?", now, []string{"pending", "notified"}).
