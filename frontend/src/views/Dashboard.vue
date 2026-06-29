@@ -78,6 +78,37 @@
         </div>
         <div class="section-card" style="margin-top: 20px;">
           <div class="section-header">
+            <h3><el-icon :size="16" :color="getCssVar('--red')"><Warning /></el-icon> 告警引擎</h3>
+          </div>
+          <div style="padding: 20px; font-size: 13px; color: var(--text-tertiary); line-height: 2.2;">
+            <div style="display: flex; justify-content: space-between;">
+              <span>状态</span>
+              <span :style="{ color: evalStatus?.running ? 'var(--emerald)' : 'var(--red)', fontWeight: 600 }">● {{ evalStatus?.running ? '运行中' : '已停止' }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>评估次数</span>
+              <span style="color: var(--cyan);">{{ evalStatus?.eval_count ?? '-' }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>成功/失败</span>
+              <span><span style="color:var(--emerald);">{{ evalStatus?.eval_success_count ?? 0 }}</span><span style="color:var(--text-tertiary);"> / </span><span style="color:var(--red);">{{ evalStatus?.eval_fail_count ?? 0 }}</span></span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>熔断器(开)</span>
+              <span style="color: var(--amber);">{{ evalStatus?.open_breakers ?? 0 }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>队列深度</span>
+              <span style="color: var(--cyan);">{{ evalStatus?.queue_depth ?? 0 }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+              <span>实时告警</span>
+              <span :style="{ color: firingCount > 0 ? 'var(--red)' : 'var(--emerald)', fontWeight: 700 }">{{ firingCount }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="section-card" style="margin-top: 20px;">
+          <div class="section-header">
             <h3><el-icon :size="16" :color="getCssVar('--emerald')"><InfoFilled /></el-icon> 系统信息</h3>
           </div>
           <div style="padding: 20px; font-size: 13px; color: var(--text-tertiary); line-height: 2.2;">
@@ -107,8 +138,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
-import { getAllDataSources, getCronJobs, getAllNotifications, getReports } from '../api'
+import { getAllDataSources, getCronJobs, getAllNotifications, getReports, getAlertStats, getAlertEvaluatorStatus } from '../api'
 import type { ReportRecord } from '../types'
+import type { AlertStats, EvaluatorStatus } from '../types/alerting'
 import { useTheme } from '../composables/useTheme'
 
 function getCssVar(name: string): string {
@@ -119,6 +151,8 @@ const { currentTheme } = useTheme()
 const loading = ref(false)
 const recentReports = ref<ReportRecord[]>([])
 const statValues = ref([0, 0, 0, 0])
+const firingCount = ref(0)
+const evalStatus = ref<EvaluatorStatus | null>(null)
 const stats = computed(() => {
   // read currentTheme to re-evaluate on theme change
   void currentTheme.value
@@ -127,20 +161,25 @@ const stats = computed(() => {
     { label: '定时任务', value: statValues.value[1], icon: 'Clock', color: getCssVar('--emerald'), glow: getCssVar('--emerald'), bg: getCssVar('--emerald-dim') },
     { label: '通知渠道', value: statValues.value[2], icon: 'Bell', color: getCssVar('--amber'), glow: getCssVar('--amber'), bg: getCssVar('--amber-dim') },
     { label: '历史报告', value: statValues.value[3], icon: 'Document', color: getCssVar('--purple'), glow: getCssVar('--purple'), bg: getCssVar('--purple-dim') },
+    { label: '告警中', value: firingCount.value, icon: 'Warning', color: getCssVar('--red'), glow: getCssVar('--red'), bg: getCssVar('--red-dim') },
   ]
 })
 
 onMounted(async () => {
   loading.value = true
   try {
-    const [ds, cron, notif, reps] = await Promise.all([
+    const [ds, cron, notif, reps, astat, ev] = await Promise.all([
       getAllDataSources(), getCronJobs(), getAllNotifications(), getReports(),
+      getAlertStats(), getAlertEvaluatorStatus(),
     ])
     statValues.value[0] = ds.data.length
     statValues.value[1] = cron.data.length
     statValues.value[2] = notif.data.length
     statValues.value[3] = reps.data.total
     recentReports.value = reps.data.items.slice(0, 5)
+    const st = astat.data.by_state
+    firingCount.value = st.find(x => x.State === 'firing')?.Count || 0
+    evalStatus.value = ev.data
   } catch { /* ignore */ } finally {
     loading.value = false
   }

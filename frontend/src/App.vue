@@ -77,6 +77,39 @@
                   <span>巡检模板</span>
                 </el-menu-item>
               </el-sub-menu>
+              <el-sub-menu index="alert-group">
+                <template #title>
+                  <el-icon><Warning /></el-icon>
+                  <span>告警管理</span>
+                </template>
+                <el-menu-item index="/alerts">
+                  <el-icon><Warning /></el-icon>
+                  <template #title>
+                    <span style="flex:1;">实时告警</span>
+                    <el-badge :value="alertFiringCount" :hidden="alertFiringCount===0" class="alert-badge" />
+                  </template>
+                </el-menu-item>
+                <el-menu-item index="/alert-rules">
+                  <el-icon><AlarmClock /></el-icon>
+                  <span>告警规则</span>
+                </el-menu-item>
+                <el-menu-item index="/alert-silences">
+                  <el-icon><Mute /></el-icon>
+                  <span>告警静默</span>
+                </el-menu-item>
+                <el-menu-item index="/alert-inhibits">
+                  <el-icon><Filter /></el-icon>
+                  <span>抑制规则</span>
+                </el-menu-item>
+                <el-menu-item index="/alert-routes">
+                  <el-icon><Share /></el-icon>
+                  <span>通知路由</span>
+                </el-menu-item>
+                <el-menu-item index="/alert-history">
+                  <el-icon><Histogram /></el-icon>
+                  <span>告警历史</span>
+                </el-menu-item>
+              </el-sub-menu>
               <el-menu-item index="/ai">
                 <el-icon><MagicStick /></el-icon>
                 <span>AI 助手</span>
@@ -154,9 +187,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from './composables/useTheme'
+import { getAlertStats } from './api'
 
 const route = useRoute()
 const router = useRouter()
@@ -168,6 +202,13 @@ const showLayout = computed(() => route.path !== '/login')
 const username = ref(localStorage.getItem('username') || 'Admin')
 
 const { currentTheme, setTheme, themeOptions } = useTheme()
+const alertFiringCount = ref(0)
+let pollTimer: ReturnType<typeof setInterval> | null = null
+async function pollAlertCount() {
+  try { const r = await getAlertStats(); const s = r.data.by_state; alertFiringCount.value = s.find(x => x.State === 'firing')?.Count || 0 } catch {}
+}
+onMounted(() => { pollAlertCount(); pollTimer = setInterval(pollAlertCount, 15000) })
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
 function toggleCollapse() {
   collapsed.value = !collapsed.value
@@ -445,4 +486,6 @@ function handleLogout() {
   opacity: 0;
   transform: translateY(-8px);
 }
+.alert-badge { --el-badge-bg-color: var(--red); margin-top: -2px; }
+.alert-badge :deep(.el-badge__content) { font-size: 11px; padding: 0 5px; height: 18px; line-height: 18px; border: none; }
 </style>

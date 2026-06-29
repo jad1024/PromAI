@@ -20,6 +20,7 @@ import (
 	"PromAI/pkg/database"
 	"PromAI/pkg/metrics"
 	"PromAI/pkg/notify"
+	"PromAI/pkg/alerting/notifier"
 	piagent "PromAI/pkg/pi-agent"
 	"PromAI/pkg/prometheus"
 	"PromAI/pkg/report"
@@ -333,6 +334,7 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/notifications/all", logged(auth(a.handleAllNotifications)))
 	mux.HandleFunc("/api/promai/notifications/", logged(auth(a.handleNotificationByID)))
 	mux.HandleFunc("/api/promai/notifications/test", logged(auth(a.handleTestNotification)))
+	mux.HandleFunc("/api/promai/notifications/template/preview", logged(auth(a.handleTemplatePreview)))
 	mux.HandleFunc("/api/promai/cronjobs", logged(auth(a.handleCronJobs)))
 	mux.HandleFunc("/api/promai/cronjobs/", logged(auth(a.handleCronJobByID)))
 	mux.HandleFunc("/api/promai/report-records", logged(auth(a.handleReports)))
@@ -355,6 +357,24 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/dashboard/health/trend", logged(auth(a.handleDashboardHealthTrend)))
 	mux.HandleFunc("/api/promai/sync-sources", logged(auth(a.handleSyncSources)))
 	mux.HandleFunc("/api/promai/sync-sources/", logged(auth(a.handleSyncSourceByID)))
+
+	// ===== Alerting 子系统 =========================================================
+	mux.HandleFunc("/api/promai/alert/rules", logged(auth(a.handleAlertRules)))
+	mux.HandleFunc("/api/promai/alert/rules/", logged(auth(a.handleAlertRuleByID)))
+	mux.HandleFunc("/api/promai/alert/silences", logged(auth(a.handleAlertSilences)))
+	mux.HandleFunc("/api/promai/alert/silences/", logged(auth(a.handleAlertSilenceByID)))
+	mux.HandleFunc("/api/promai/alert/inhibits", logged(auth(a.handleAlertInhibits)))
+	mux.HandleFunc("/api/promai/alert/inhibits/", logged(auth(a.handleAlertInhibitByID)))
+	mux.HandleFunc("/api/promai/alert/routes", logged(auth(a.handleAlertRoutes)))
+	mux.HandleFunc("/api/promai/alert/routes/", logged(auth(a.handleAlertRouteByID)))
+	mux.HandleFunc("/api/promai/alert/instances", logged(auth(a.handleAlertInstances)))
+	mux.HandleFunc("/api/promai/alert/instances/", logged(auth(a.handleAlertInstanceByFP)))
+	mux.HandleFunc("/api/promai/alert/history/timeline", logged(auth(a.handleAlertHistoryTimeline)))
+	mux.HandleFunc("/api/promai/alert/history", logged(auth(a.handleAlertHistory)))
+	mux.HandleFunc("/api/promai/alert/groups", logged(auth(a.handleAlertGroups)))
+	mux.HandleFunc("/api/promai/alert/notify-logs", logged(auth(a.handleAlertNotifyLogs)))
+	mux.HandleFunc("/api/promai/alert/stats", logged(auth(a.handleAlertStats)))
+	mux.HandleFunc("/api/promai/alert/evaluator/status", logged(auth(a.handleAlertEvaluatorStatus)))
 
 	log.Printf("[AdminAPI] 管理接口已注册")
 }
@@ -2423,9 +2443,39 @@ func (a *AdminAPI) handleTestNotification(w http.ResponseWriter, r *http.Request
 		json.Unmarshal([]byte(nc.ConfigJSON), &cfg)
 		cfg.Enabled = true
 		notify.SendFeishu(cfg, "", "PromAI", "测试数据源", testSummary)
+	case "webhook":
+		// 万能 Webhook 无需额外测试，只做连通性检测
+		writeJSON(w, map[string]string{"message": "测试通知已发送（webhook 通道无内置测试消息）"})
+		return
 	}
 
 	writeJSON(w, map[string]string{"message": "测试通知已发送"})
+}
+
+// handleTemplatePreview 用给定的 MessageTemplate + mock 数据渲染预览
+//
+// Request: { "template": {...}, "resolved": false, "mock_count": 10 }
+// Response: { "title": "...", "markdown": "...", "html": "...", "plain": "...", "bytes": 1234, "errors": [...] }
+func (a *AdminAPI) handleTemplatePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, 405, "不支持的请求方法")
+		return
+	}
+	var req struct {
+		Template  *notifier.MessageTemplate `json:"template,omitempty"`
+		Resolved  bool                      `json:"resolved,omitempty"`
+		MockCount int                       `json:"mock_count,omitempty"` // 0 = 默认 3 条
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "请求体格式错误: "+err.Error())
+		return
+	}
+	if req.MockCount > 500 {
+		req.MockCount = 500 // 防止预览生成太多消耗内存
+	}
+	n := notifier.New()
+	result := n.RenderPreview(req.Template, req.Resolved, req.MockCount)
+	writeJSON(w, result)
 }
 
 func (a *AdminAPI) handleTestDatasource(w http.ResponseWriter, r *http.Request) {
@@ -3288,54 +3338,36 @@ func maskNotificationConfig(channelType, rawJSON string) string {
 	if rawJSON == "" {
 		return rawJSON
 	}
+	// 用 map 解析以保留所有未知字段（特别是 alerting 模板的 template 子键）
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(rawJSON), &m); err != nil || m == nil {
+		return rawJSON
+	}
+	// 按渠道类型遮蔽敏感字段
 	switch channelType {
 	case "dingtalk":
-		var cfg notify.DingtalkConfig
-		if json.Unmarshal([]byte(rawJSON), &cfg) == nil {
-			if cfg.Secret != "" {
-				cfg.Secret = "********"
-			}
-			if b, err := json.Marshal(cfg); err == nil {
-				return string(b)
-			}
+		if v, ok := m["secret"].(string); ok && v != "" {
+			m["secret"] = "********"
 		}
 	case "email":
-		var cfg notify.EmailConfig
-		if json.Unmarshal([]byte(rawJSON), &cfg) == nil {
-			if cfg.Password != "" {
-				cfg.Password = "********"
-			}
-			if b, err := json.Marshal(cfg); err == nil {
-				return string(b)
-			}
-		}
-	case "wechat_work":
-		var cfg notify.WeChatWorkConfig
-		if json.Unmarshal([]byte(rawJSON), &cfg) == nil {
-			if b, err := json.Marshal(cfg); err == nil {
-				return string(b)
-			}
+		if v, ok := m["password"].(string); ok && v != "" {
+			m["password"] = "********"
 		}
 	case "wechat_app":
-		var cfg notify.WeChatAppConfig
-		if json.Unmarshal([]byte(rawJSON), &cfg) == nil {
-			if cfg.Secret != "" {
-				cfg.Secret = "********"
-			}
-			if b, err := json.Marshal(cfg); err == nil {
-				return string(b)
-			}
+		if v, ok := m["secret"].(string); ok && v != "" {
+			m["secret"] = "********"
 		}
 	case "feishu":
-		var cfg notify.FeishuConfig
-		if json.Unmarshal([]byte(rawJSON), &cfg) == nil {
-			if cfg.Secret != "" {
-				cfg.Secret = "********"
-			}
-			if b, err := json.Marshal(cfg); err == nil {
-				return string(b)
-			}
+		if v, ok := m["secret"].(string); ok && v != "" {
+			m["secret"] = "********"
 		}
+	case "wechat_work":
+		// 企业微信机器人 webhook 里含 key，可选 mask；但很多用户依赖明文识别，先不动
+	case "webhook":
+		// HTTP webhook 一般明文
+	}
+	if b, err := json.Marshal(m); err == nil {
+		return string(b)
 	}
 	return rawJSON
 }
@@ -3344,51 +3376,29 @@ func restoreSensitiveFields(channelType, oldJSON, newJSON string) string {
 	if oldJSON == "" || newJSON == "" {
 		return newJSON
 	}
+	// 用 map 解析以保留 newJSON 里的所有字段（含 template）
+	var oldM, newM map[string]interface{}
+	if err := json.Unmarshal([]byte(oldJSON), &oldM); err != nil {
+		return newJSON
+	}
+	if err := json.Unmarshal([]byte(newJSON), &newM); err != nil {
+		return newJSON
+	}
+	restore := func(field string) {
+		if v, ok := newM[field].(string); ok && v == "********" {
+			if oldV, ok := oldM[field]; ok {
+				newM[field] = oldV
+			}
+		}
+	}
 	switch channelType {
 	case "email":
-		var old, new notify.EmailConfig
-		if json.Unmarshal([]byte(oldJSON), &old) != nil || json.Unmarshal([]byte(newJSON), &new) != nil {
-			return newJSON
-		}
-		if new.Password == "********" {
-			new.Password = old.Password
-		}
-		if b, err := json.Marshal(new); err == nil {
-			return string(b)
-		}
-	case "dingtalk":
-		var old, new notify.DingtalkConfig
-		if json.Unmarshal([]byte(oldJSON), &old) != nil || json.Unmarshal([]byte(newJSON), &new) != nil {
-			return newJSON
-		}
-		if new.Secret == "********" {
-			new.Secret = old.Secret
-		}
-		if b, err := json.Marshal(new); err == nil {
-			return string(b)
-		}
-	case "wechat_app":
-		var old, new notify.WeChatAppConfig
-		if json.Unmarshal([]byte(oldJSON), &old) != nil || json.Unmarshal([]byte(newJSON), &new) != nil {
-			return newJSON
-		}
-		if new.Secret == "********" {
-			new.Secret = old.Secret
-		}
-		if b, err := json.Marshal(new); err == nil {
-			return string(b)
-		}
-	case "feishu":
-		var old, new notify.FeishuConfig
-		if json.Unmarshal([]byte(oldJSON), &old) != nil || json.Unmarshal([]byte(newJSON), &new) != nil {
-			return newJSON
-		}
-		if new.Secret == "********" {
-			new.Secret = old.Secret
-		}
-		if b, err := json.Marshal(new); err == nil {
-			return string(b)
-		}
+		restore("password")
+	case "dingtalk", "wechat_app", "feishu":
+		restore("secret")
+	}
+	if b, err := json.Marshal(newM); err == nil {
+		return string(b)
 	}
 	return newJSON
 }

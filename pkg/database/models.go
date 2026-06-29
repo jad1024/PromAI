@@ -208,6 +208,210 @@ type AiMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ===== Alerting 子系统模型 =====================================================
+//
+// AlertRule       告警规则定义（可复用 MetricConfig，也可自定义 PromQL）
+// AlertInstance   实时告警实例（按 fingerprint 去重）
+// AlertHistory    告警历史归档（状态变迁追加，便于回溯/统计）
+// AlertSilence    静默规则（按 label matcher 静默匹配的活跃告警）
+// AlertInhibit    抑制规则（高优先级告警抑制低优先级告警）
+// AlertRoute      通知路由树（扁平表，parent_id 0 表示根）
+// AlertGroup      运行时分组聚合状态（dispatcher 调度通知的最小单位）
+// AlertNotifyLog  通知发送日志（成功/失败/降级）
+// AlertMatcher    通用 matcher（=, !=, =~, !~）以 JSON 嵌入到字符串字段
+//
+// 字段约定：所有 JSON 字段统一存为 string（type:text），由上层 Marshal/Unmarshal。
+// =================================================================================
+
+// AlertRule 告警规则
+//   - SourceType=metric  时使用 MetricConfigID 引用现有指标，无需重复维护 PromQL
+//   - SourceType=custom  时使用 Expr/Threshold/ThresholdType 字段，自定义 PromQL
+//   - 数据源选择：DatasourceIDs（显式列表）和 DatasourceSelector（按 tag/project 批量）二选一
+type AlertRule struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Name        string `gorm:"size:200;not null;index" json:"name"`
+	Description string `gorm:"size:500" json:"description"`
+
+	// 规则来源
+	SourceType     string `gorm:"size:20;default:metric;index" json:"source_type"` // metric / custom
+	MetricConfigID *uint  `gorm:"index" json:"metric_config_id,omitempty"`
+
+	// 关联巡检模版（可选）
+	TemplateID *uint `gorm:"index" json:"template_id,omitempty"`
+
+	// 自定义 PromQL（SourceType=custom 时使用，metric 时可作为覆盖）
+	Expr            string  `gorm:"type:text" json:"expr"`
+	Threshold       float64 `json:"threshold"`
+	ThresholdType   string  `gorm:"size:20;default:greater" json:"threshold_type"` // gt/ge/lt/le/eq/ne (复用 MetricConfig 的语义)
+	HasThreshold    bool    `json:"has_threshold"`                                 // 是否覆盖指标自带阈值
+
+	// 数据源选择
+	DatasourceIDsRaw     string `gorm:"column:datasource_ids;type:text" json:"-"`
+	DatasourceIDs        []uint `gorm:"-" json:"datasource_ids,omitempty"`
+	DatasourceSelectorJSON string `gorm:"column:datasource_selector;type:text" json:"datasource_selector,omitempty"` // {"tag":"prod","project":"core","all":false}
+
+	// 触发判定
+	Severity        string `gorm:"size:20;default:warning;index" json:"severity"` // critical / warning / info
+	ForDuration     string `gorm:"size:20" json:"for_duration"`                   // e.g. 5m
+	KeepFiringFor   string `gorm:"size:20" json:"keep_firing_for"`                // e.g. 5m
+	EvalIntervalSec int    `gorm:"default:0" json:"eval_interval_sec"`            // 0=使用全局间隔
+
+	// 通知频率（优先级高于路由配置）
+	RepeatInterval string `gorm:"size:20" json:"repeat_interval"` // 重复通知间隔, e.g. 4h；空=继承路由
+	MaxSendCount   int    `gorm:"default:0" json:"max_send_count"` // 最大发送次数；0=继承路由
+
+	// 元数据
+	LabelsJSON      string `gorm:"type:text" json:"labels_json"`      // {"team":"infra"}
+	AnnotationsJSON string `gorm:"type:text" json:"annotations_json"` // {"summary":"...","description":"...","runbook_url":"..."}
+
+	// 告警原因 & 影响范围（用户在创建规则时填写，发通知时附上）
+	Cause  string `gorm:"type:text" json:"cause"`
+	Impact string `gorm:"type:text" json:"impact"`
+
+	// 通知路径（二选一；route_id 优先）
+	RouteID             *uint  `gorm:"index" json:"route_id,omitempty"`
+	NotifyChannelIDsRaw string `gorm:"column:notify_channel_ids;type:text" json:"-"`
+	NotifyChannelIDs    []uint `gorm:"-" json:"notify_channel_ids,omitempty"`
+
+	Enabled   bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AlertInstance 当前活跃 / 待恢复的告警实例（热表）
+type AlertInstance struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Fingerprint string `gorm:"uniqueIndex;size:64;not null" json:"fingerprint"`
+
+	RuleID       uint  `gorm:"index;index:idx_ai_rule_state,priority:1" json:"rule_id"`
+	DatasourceID uint  `gorm:"index;index:idx_ai_ds_state,priority:1" json:"datasource_id"`
+
+	LabelsJSON      string `gorm:"type:text" json:"labels_json"`
+	AnnotationsJSON string `gorm:"type:text" json:"annotations_json"`
+
+	State    string `gorm:"size:20;index:idx_ai_rule_state,priority:2;index:idx_ai_ds_state,priority:2;index" json:"state"` // pending / firing / resolved
+	Severity string `gorm:"size:20;index" json:"severity"`
+
+	Value     float64 `json:"value"`
+	Threshold float64 `json:"threshold"`
+
+	ActiveAt    time.Time  `json:"active_at"`
+	FiredAt     *time.Time `json:"fired_at,omitempty"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	LastEvalAt  time.Time  `gorm:"index" json:"last_eval_at"`
+
+	GroupKey       string `gorm:"size:64;index" json:"group_key"`
+	SilencedByJSON string `gorm:"type:text" json:"silenced_by_json"`
+	InhibitedByJSON string `gorm:"type:text" json:"inhibited_by_json"`
+
+	NotifiedCount   int        `json:"notified_count"`
+	LastNotifiedAt  *time.Time `json:"last_notified_at,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AlertHistory 告警状态变迁追加表，单条事件不可变
+type AlertHistory struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	Fingerprint     string    `gorm:"index;size:64" json:"fingerprint"`
+	RuleID          uint      `gorm:"index" json:"rule_id"`
+	RuleName        string    `gorm:"size:200" json:"rule_name"`
+	DatasourceID    uint      `gorm:"index" json:"datasource_id"`
+	DatasourceName  string    `gorm:"size:200" json:"datasource_name"`
+	State           string    `gorm:"size:20;index" json:"state"`
+	Severity        string    `gorm:"size:20;index" json:"severity"`
+	Value           float64   `json:"value"`
+	Threshold       float64   `json:"threshold"`
+	LabelsJSON      string    `gorm:"type:text" json:"labels_json"`
+	AnnotationsJSON string    `gorm:"type:text" json:"annotations_json"`
+	EventType       string    `gorm:"size:20;index" json:"event_type"` // pending/firing/resolved/silenced/inhibited/notified
+	NotifyChannels  string    `gorm:"type:text" json:"notify_channels"` // 通知渠道 JSON: [{"id":1,"type":"wechat_work","name":"企业微信"}]
+	NotifyResult    string    `gorm:"size:20" json:"notify_result"`     // 通知结果: success/failed/throttled
+	OccurredAt      time.Time `gorm:"index" json:"occurred_at"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// AlertSilence 静默规则
+type AlertSilence struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Comment      string    `gorm:"size:500;not null" json:"comment"`
+	CreatedBy    string    `gorm:"size:100" json:"created_by"`
+	MatchersJSON string    `gorm:"type:text;not null" json:"matchers_json"`
+	StartsAt     time.Time `gorm:"index" json:"starts_at"`
+	EndsAt       time.Time `gorm:"index" json:"ends_at"`
+	Enabled      bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// AlertInhibit 抑制规则
+type AlertInhibit struct {
+	ID                 uint      `gorm:"primaryKey" json:"id"`
+	Name               string    `gorm:"size:200;not null" json:"name"`
+	SourceMatchersJSON string    `gorm:"type:text;not null" json:"source_matchers_json"`
+	TargetMatchersJSON string    `gorm:"type:text;not null" json:"target_matchers_json"`
+	EqualLabelsJSON    string    `gorm:"type:text" json:"equal_labels_json"` // ["cluster","instance"]
+	Enabled            bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// AlertRoute 通知路由（扁平表模拟树）
+type AlertRoute struct {
+	ID                  uint   `gorm:"primaryKey" json:"id"`
+	ParentID            *uint  `gorm:"index" json:"parent_id,omitempty"`
+	Name                string `gorm:"size:200;not null" json:"name"`
+	MatchersJSON        string `gorm:"type:text" json:"matchers_json"`
+	Continue            bool   `gorm:"column:cont" json:"continue"`
+	GroupByJSON         string `gorm:"type:text" json:"group_by_json"`
+	GroupWait           string `gorm:"size:20;default:30s" json:"group_wait"`
+	GroupInterval       string `gorm:"size:20;default:5m" json:"group_interval"`
+	RepeatInterval      string `gorm:"size:20;default:4h" json:"repeat_interval"`
+	NotifyChannelIDsRaw string `gorm:"column:notify_channel_ids;type:text" json:"-"`
+	NotifyChannelIDs    []uint `gorm:"-" json:"notify_channel_ids,omitempty"`
+	Priority            int    `gorm:"default:0;index" json:"priority"`
+	SendResolved        bool   `gorm:"default:false" json:"send_resolved"`
+	MaxSendCount        int    `gorm:"default:0" json:"max_send_count"`
+	Enabled             bool   `gorm:"default:true" json:"enabled"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// AlertGroup 运行时分组聚合状态
+type AlertGroup struct {
+	ID           uint   `gorm:"primaryKey" json:"id"`
+	GroupKey     string `gorm:"uniqueIndex;size:64;not null" json:"group_key"`
+	RuleID       uint   `gorm:"index" json:"rule_id"`
+	DatasourceID uint   `gorm:"index" json:"datasource_id"`
+	RouteID      uint   `gorm:"index" json:"route_id"`
+	LabelsJSON   string `gorm:"type:text" json:"labels_json"`
+	AlertCount     int        `json:"alert_count"`
+	FirstSeenAt    time.Time  `json:"first_seen_at"`
+	LastNotifiedAt *time.Time `json:"last_notified_at,omitempty"`
+	NextNotifyAt   *time.Time `gorm:"index" json:"next_notify_at,omitempty"`
+	SendCount      int        `gorm:"default:0" json:"send_count"`
+	State          string     `gorm:"size:20;index" json:"state"` // idle/pending/notified
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// AlertNotifyLog 通知发送日志
+type AlertNotifyLog struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	GroupKey    string    `gorm:"size:64;index" json:"group_key"`
+	RuleID      uint      `gorm:"index" json:"rule_id"`
+	ChannelID   uint      `gorm:"index" json:"channel_id"`
+	ChannelType string    `gorm:"size:50" json:"channel_type"`
+	Status      string    `gorm:"size:20;index" json:"status"` // success / failed / throttled
+	Error       string    `gorm:"size:500" json:"error"`
+	PayloadHash string    `gorm:"size:64;index" json:"payload_hash"`
+	AlertCount  int       `json:"alert_count"`
+	Content     string    `gorm:"type:text" json:"content"`              // 实际发送的内容（markdown）
+	SentAt      time.Time `gorm:"index" json:"sent_at"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 func AutoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&DataSource{},
@@ -225,5 +429,14 @@ func AutoMigrate(db *gorm.DB) error {
 		&SyncLog{},
 		&AiSession{},
 		&AiMessage{},
+		// alerting
+		&AlertRule{},
+		&AlertInstance{},
+		&AlertHistory{},
+		&AlertSilence{},
+		&AlertInhibit{},
+		&AlertRoute{},
+		&AlertGroup{},
+		&AlertNotifyLog{},
 	)
 }

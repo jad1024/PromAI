@@ -70,6 +70,15 @@ type FeishuConfig struct {
 	VerifySign bool   `yaml:"verify_sign" json:"verify_sign"`
 }
 
+// WebhookConfig 万能 Webhook 通道，支持自定义 URL、Method、Headers 和 Body
+type WebhookConfig struct {
+	Enabled      bool              `yaml:"enabled" json:"enabled"`
+	URL          string            `yaml:"url" json:"url"`
+	Method       string            `yaml:"method" json:"method"`
+	Headers      map[string]string `yaml:"headers" json:"headers"`
+	BodyTemplate string            `yaml:"body_template" json:"body_template"`
+}
+
 type AlertSummary struct {
 	TotalAlerts    int
 	CriticalAlerts int

@@ -117,6 +117,14 @@ func main() {
 	// 启动全局定时调度器（从配置文件和数据库加载定时任务，含数据源同步任务）
 	startGlobalScheduler(config, collector)
 
+	// 启动告警子系统（evaluator + dispatcher + notifier）
+	if a, err := startAlerting(); err != nil {
+		log.Printf("[Alerting] 启动失败: %v", err)
+	} else {
+		adminAlerting = a
+		log.Printf("[Alerting] 子系统启动成功")
+	}
+
 	// 配置报告清理
 	if config.ReportCleanup.Enabled {
 		cleanupSchedule := config.ReportCleanup.CronSchedule

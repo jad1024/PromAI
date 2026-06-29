@@ -83,6 +83,43 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/AiChat.vue'),
     meta: { title: 'AI 助手', icon: 'MagicStick' },
   },
+  // ===== Alerting =================================================================
+  {
+    path: '/alerts',
+    name: 'AlertInstances',
+    component: () => import('../views/AlertInstances.vue'),
+    meta: { title: '实时告警', icon: 'Warning' },
+  },
+  {
+    path: '/alert-rules',
+    name: 'AlertRules',
+    component: () => import('../views/AlertRules.vue'),
+    meta: { title: '告警规则', icon: 'AlarmClock' },
+  },
+  {
+    path: '/alert-silences',
+    name: 'AlertSilences',
+    component: () => import('../views/AlertSilences.vue'),
+    meta: { title: '告警静默', icon: 'Mute' },
+  },
+  {
+    path: '/alert-inhibits',
+    name: 'AlertInhibits',
+    component: () => import('../views/AlertInhibits.vue'),
+    meta: { title: '抑制规则', icon: 'Filter' },
+  },
+  {
+    path: '/alert-routes',
+    name: 'AlertRoutes',
+    component: () => import('../views/AlertRoutes.vue'),
+    meta: { title: '通知路由', icon: 'Share' },
+  },
+  {
+    path: '/alert-history',
+    name: 'AlertHistory',
+    component: () => import('../views/AlertHistory.vue'),
+    meta: { title: '告警历史', icon: 'Histogram' },
+  },
 ]
 
 const router = createRouter({

@@ -50,6 +50,13 @@ func GetGlobalPort() string {
 	return globalPort
 }
 
+// GetGlobalPublicURL 返回 PromAI 对外可访问的基础 URL（含协议 + 主机）。
+// 通过环境变量 PROMAI_PUBLIC_URL 配置，例如 https://promai.example.com。
+// 留空时返回空串，调用方应有兜底（如 http://127.0.0.1:port）。
+func GetGlobalPublicURL() string {
+	return strings.TrimRight(os.Getenv("PROMAI_PUBLIC_URL"), "/")
+}
+
 // GetServerURL 获取服务器的基础URL，支持动态域名获取
 func GetServerURL(r *http.Request) string {
 	// log.Printf("打印请求信息: %s", r)

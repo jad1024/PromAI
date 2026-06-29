@@ -72,6 +72,35 @@ export const createNotification = (n: NotificationChannel) => api.post<Notificat
 export const updateNotification = (id: number, n: NotificationChannel) => api.put<NotificationChannel>(`/notifications/${id}`, n)
 export const deleteNotification = (id: number) => api.delete(`/notifications/${id}`)
 export const testNotification = (id: number) => api.post('/notifications/test', { id })
+export interface MessageTemplate {
+  style?: 'simple' | 'table' | 'card'
+  title_format?: string
+  show_cause?: boolean
+  show_impact?: boolean
+  show_value_range?: boolean
+  show_hit_count?: boolean
+  show_datasource?: boolean
+  show_time?: boolean
+  show_detail_link?: boolean
+  host_format?: 'full' | 'short' | 'with_ip'
+  time_format?: string
+  value_precision?: number
+  max_entries?: number
+  max_bytes?: number
+  // 高级：自定义 Go template
+  custom_markdown?: string
+  custom_subject?: string
+}
+export interface TemplatePreviewResult {
+  title: string
+  markdown: string
+  html: string
+  plain: string
+  bytes: number
+  errors?: string[]
+}
+export const previewMessageTemplate = (template: MessageTemplate, resolved = false, mockCount = 0) =>
+  api.post<TemplatePreviewResult>('/notifications/template/preview', { template, resolved, mock_count: mockCount })
 
 // Cron Jobs
 export const getCronJobs = () => api.get<CronJob[]>('/cronjobs')
@@ -157,5 +186,75 @@ export const testAiModel = (model: {
   name: string; provider: string; model: string; base_url: string;
   api_key: string; thinking_level: string; max_tokens: number; proxy_url?: string
 }) => api.post('/ai/test-model', model)
+
+// ===== Alerting =================================================================
+import type {
+  AlertRule, AlertInstance, AlertHistoryRow, AlertSilence, AlertInhibit, AlertRoute,
+  AlertGroup, AlertNotifyLog, AlertStats, EvaluatorStatus, TestRuleResult, TimelineGroup,
+} from '../types/alerting'
+
+export const getAlertRules = (params?: { keyword?: string; severity?: string; enabled?: string; page?: number; page_size?: number }) =>
+  api.get<{ items: AlertRule[]; total: number }>('/alert/rules', { params })
+export const getAlertRule = (id: number) => api.get<AlertRule>(`/alert/rules/${id}`)
+export const createAlertRule = (r: AlertRule) => api.post<AlertRule>('/alert/rules', r)
+export const updateAlertRule = (id: number, r: AlertRule) => api.put<AlertRule>(`/alert/rules/${id}`, r)
+export const deleteAlertRule = (id: number) => api.delete(`/alert/rules/${id}`)
+export const testAlertRule = (id: number) =>
+  api.post<{ rule_id: number; datasources: TestRuleResult[] }>(`/alert/rules/${id}/test`)
+export const batchToggleAlertRules = (ids: number[], enabled: boolean) =>
+  api.post('/alert/rules/batch-toggle', { ids, enabled })
+export const batchDeleteAlertRules = (ids: number[]) =>
+  api.post<{ success: boolean; count: number }>('/alert/rules/batch-delete', { ids })
+export const batchEditAlertRules = (ids: number[], updates: Record<string, any>) =>
+  api.post<{ success: boolean; count: number }>('/alert/rules/batch-edit', { ids, ...updates })
+export const generateAlertRulesFromTemplate = (templateId: number) =>
+  api.post<{ success: boolean; created: number }>('/alert/rules/generate-from-template', { template_id: templateId })
+
+export const getAlertInstances = (params?: {
+  page?: number; page_size?: number; state?: string; severity?: string;
+  datasource_id?: number; rule_id?: number; fingerprint?: string;
+  keyword?: string; include_masked?: string
+}) => api.get<{ items: AlertInstance[]; total: number; page: number; page_size: number }>('/alert/instances', { params })
+export const getAlertInstance = (fingerprint: string) =>
+  api.get<{ instance: AlertInstance; history: AlertHistoryRow[]; notify_logs?: AlertNotifyLog[] }>(`/alert/instances/${fingerprint}`)
+export const clearAlertInstances = () =>
+  api.delete('/alert/instances')
+
+export const getAlertHistory = (params?: {
+  page?: number; page_size?: number; rule_id?: number; datasource_id?: number;
+  event_type?: string; severity?: string; keyword?: string; from?: string; to?: string
+}) => api.get<{ items: AlertHistoryRow[]; total: number; page: number; page_size: number }>('/alert/history', { params })
+
+export const getAlertHistoryTimeline = (params?: {
+  rule_id?: number; datasource_id?: number; keyword?: string; from?: string; to?: string
+}) => api.get<{ groups: TimelineGroup[] }>('/alert/history/timeline', { params })
+
+export const getAlertSilences = (params?: { include_expired?: boolean; page?: number; page_size?: number }) =>
+  api.get<{ items: AlertSilence[]; total: number }>('/alert/silences', { params })
+export const getAlertSilence = (id: number) => api.get<AlertSilence>(`/alert/silences/${id}`)
+export const createAlertSilence = (s: AlertSilence) => api.post<AlertSilence>('/alert/silences', s)
+export const updateAlertSilence = (id: number, s: AlertSilence) => api.put<AlertSilence>(`/alert/silences/${id}`, s)
+export const deleteAlertSilence = (id: number) => api.delete(`/alert/silences/${id}`)
+
+export const getAlertInhibits = (params?: { page?: number; page_size?: number }) =>
+  api.get<{ items: AlertInhibit[]; total: number }>('/alert/inhibits', { params })
+export const getAlertInhibit = (id: number) => api.get<AlertInhibit>(`/alert/inhibits/${id}`)
+export const createAlertInhibit = (i: AlertInhibit) => api.post<AlertInhibit>('/alert/inhibits', i)
+export const updateAlertInhibit = (id: number, i: AlertInhibit) => api.put<AlertInhibit>(`/alert/inhibits/${id}`, i)
+export const deleteAlertInhibit = (id: number) => api.delete(`/alert/inhibits/${id}`)
+
+export const getAlertRoutes = () => api.get<{ items: AlertRoute[]; total: number }>('/alert/routes')
+export const getAlertRoute = (id: number) => api.get<AlertRoute>(`/alert/routes/${id}`)
+export const createAlertRoute = (r: AlertRoute) => api.post<AlertRoute>('/alert/routes', r)
+export const updateAlertRoute = (id: number, r: AlertRoute) => api.put<AlertRoute>(`/alert/routes/${id}`, r)
+export const deleteAlertRoute = (id: number) => api.delete(`/alert/routes/${id}`)
+
+export const getAlertGroups = () => api.get<{ items: AlertGroup[]; total: number }>('/alert/groups')
+export const getAlertNotifyLogs = (params?: {
+  page?: number; page_size?: number; status?: string; channel_id?: number; rule_id?: number
+}) => api.get<{ items: AlertNotifyLog[]; total: number; page: number; page_size: number }>('/alert/notify-logs', { params })
+
+export const getAlertStats = () => api.get<AlertStats>('/alert/stats')
+export const getAlertEvaluatorStatus = () => api.get<EvaluatorStatus>('/alert/evaluator/status')
 
 export default api

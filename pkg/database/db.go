@@ -20,8 +20,18 @@ var DB *gorm.DB
 
 func InitDB(dbPath string) error {
 	var err error
-	DB, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+	// SQLite 性能优化：
+	//   - WAL：并发读不阻塞写，写不阻塞读
+	//   - busy_timeout：避免高并发瞬时锁超时
+	//   - synchronous=NORMAL：WAL 模式下足够安全且性能高
+	//   - cache_size=-65536：64MB 页缓存（负数表示 KB）
+	//   - foreign_keys=ON：保持引用一致性
+	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&_cache_size=-65536&_foreign_keys=ON"
+	DB, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger:                                   logger.Default.LogMode(logger.Warn),
+		SkipDefaultTransaction:                   true, // 提升批量写性能；模型自行控制事务
+		PrepareStmt:                              true, // 复用 prepared statement
+		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect database: %w", err)
@@ -31,8 +41,11 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get sql.DB: %w", err)
 	}
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
+	// WAL 模式下并发读不阻塞写，写不阻塞读。
+	// SetMaxOpenConns(8) 允许 evaluator worker（256个）+ Reload + API handler 并行读取；
+	// busy_timeout=5000 保证写冲突时自动重试而非直接失败。
+	sqlDB.SetMaxOpenConns(8)
+	sqlDB.SetMaxIdleConns(4)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	if err := AutoMigrate(DB); err != nil {
@@ -42,7 +55,7 @@ func InitDB(dbPath string) error {
 		return fmt.Errorf("failed to migrate template ids: %w", err)
 	}
 
-	log.Printf("数据库初始化成功: %s", dbPath)
+	log.Printf("数据库初始化成功: %s (WAL on)", dbPath)
 	return nil
 }
 
