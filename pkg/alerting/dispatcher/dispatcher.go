@@ -26,6 +26,7 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -268,6 +269,26 @@ func (d *Dispatcher) dispatchPending(ctx context.Context) {
 		if maxCount > 0 && g.SendCount >= maxCount {
 			log.Printf("[Dispatch] group=%s 已达最大发送次数 (%d/%d) → 停止通知",
 				gkShort, g.SendCount, maxCount)
+			// 写入通知日志，让用户在「通知去向」和告警时间线中可见
+			ruleID := uint(0)
+			if len(instances) > 0 {
+				ruleID = instances[0].RuleID
+			}
+			_ = database.DB.Create(&database.AlertNotifyLog{
+				GroupKey:    g.GroupKey,
+				RuleID:      ruleID,
+				ChannelID:   0,
+				ChannelType: "system",
+				Status:      "failed",
+				Error:       fmt.Sprintf("已达最大发送次数上限 (%d/%d)，停止通知", g.SendCount, maxCount),
+				AlertCount:  len(instances),
+				SentAt:      time.Now(),
+			}).Error
+			// 将 next_notify_at 推后到重复间隔之后，避免每 tick 重复打日志
+			repeat := parseDurationOr(resolveRepeatInterval(rule, route), d.cfg.DefaultRepeatInterval)
+			next := time.Now().Add(repeat)
+			g.NextNotifyAt = &next
+			_ = database.DB.Save(g).Error
 			continue
 		}
 
