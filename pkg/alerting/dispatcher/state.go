@@ -298,14 +298,31 @@ func (sm *stateManager) flush() {
 	}
 
 	// 写 DB
+	resolvedGroupKeys := make(map[string]struct{})
 	if len(toUpsert) > 0 {
 		_ = database.DB.Transaction(func(tx *gorm.DB) error {
 			for _, t := range toUpsert {
 				upsertInstance(tx, t)
 				t.dirty = false
+				if t.state == "resolved" && t.groupKey != "" {
+					resolvedGroupKeys[t.groupKey] = struct{}{}
+				}
 			}
 			return nil
 		})
+	}
+	// 如果某组的所有实例均已恢复，立即拉近 next_notify_at，
+	// 让 dispatchPending 在下一 tick 发送恢复通知，避免等待 repeat_interval。
+	for gk := range resolvedGroupKeys {
+		var activeCount int64
+		database.DB.Model(&database.AlertInstance{}).
+			Where("group_key = ? AND state IN ?", gk, []string{"pending", "firing"}).
+			Count(&activeCount)
+		if activeCount == 0 {
+			database.DB.Model(&database.AlertGroup{}).
+				Where("group_key = ?", gk).
+				Update("next_notify_at", time.Now())
+		}
 	}
 	if len(historyRows) > 0 {
 		_ = database.DB.CreateInBatches(historyRows, 100).Error
