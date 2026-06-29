@@ -17,9 +17,9 @@
           <template #default="{row}"><span :style="{marginLeft:row.parent_id?'24px':'0',fontWeight:row.parent_id?400:700}">{{ row.name }}</span></template>
         </el-table-column>
         <el-table-column label="匹配条件" min-width="200"><template #default="{row}"><el-tag v-for="m in safe(row.matchers_json)" :key="m.name+m.op+m.value" size="small" style="margin:1px;">{{ m.name }}{{ m.op }}{{ m.value }}</el-tag><span v-if="!row.parent_id" style="color:var(--text-tertiary);">兜底(全匹配)</span></template></el-table-column>
-        <el-table-column label="group_wait" width="100" prop="group_wait" />
-        <el-table-column label="group_interval" width="110" prop="group_interval" />
-        <el-table-column label="repeat_interval" width="110" prop="repeat_interval" />
+        <el-table-column label="首次等待" width="100" prop="group_wait"><template #header><el-tooltip content="新告警组创建后等待多久再发通知，用于聚合更多同类告警" placement="top"><span>首次等待 <el-icon style="font-size:12px;"><InfoFilled /></el-icon></span></el-tooltip></template></el-table-column>
+        <el-table-column label="分组间隔" width="110" prop="group_interval"><template #header><el-tooltip content="同一组内新告警追加时，两次通知间的最短间隔" placement="top"><span>分组间隔 <el-icon style="font-size:12px;"><InfoFilled /></el-icon></span></el-tooltip></template></el-table-column>
+        <el-table-column label="重复间隔" width="110" prop="repeat_interval"><template #header><el-tooltip content="告警持续未恢复时，重复通知的间隔时间" placement="top"><span>重复间隔 <el-icon style="font-size:12px;"><InfoFilled /></el-icon></span></el-tooltip></template></el-table-column>
         <el-table-column label="限流窗口" width="110" prop="throttle_window" />
         <el-table-column label="continue" width="80" align="center"><template #default="{row}"><el-tag v-if="row.continue" size="small">on</el-tag></template></el-table-column>
         <el-table-column label="启用" width="70" align="center"><template #default="{row}"><el-switch :model-value="row.enabled" size="small" @change="toggle(row)" /></template></el-table-column>
@@ -34,9 +34,9 @@
         <el-form-item label="父路由"><el-select v-model="form.parent_id" clearable placeholder="留空=根" style="width:100%;"><el-option v-for="r in items" :key="r.id" :label="r.name" :value="r.id" :disabled="r.id===editingId" /></el-select></el-form-item>
         <el-form-item label="匹配条件"><el-input v-model="form.matchers_json" type="textarea" :rows="2" placeholder='[{"name":"severity","op":"=","value":"critical"}]' /></el-form-item>
         <el-row :gutter="8">
-          <el-col :span="8"><el-form-item label="group_wait"><el-input v-model="form.group_wait" placeholder="30s" /></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="group_interval"><el-input v-model="form.group_interval" placeholder="5m" /></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="repeat_interval"><el-input v-model="form.repeat_interval" placeholder="4h" /></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="首次等待"><el-tooltip content="新告警组创建后等待多久再发通知，用于聚合更多同类告警" placement="top"><el-input v-model="form.group_wait" placeholder="30s" /></el-tooltip></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="分组间隔"><el-tooltip content="同一组内新告警追加时，两次通知间的最短间隔" placement="top"><el-input v-model="form.group_interval" placeholder="5m" /></el-tooltip></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="重复间隔"><el-tooltip content="告警持续未恢复时，重复通知的间隔时间" placement="top"><el-input v-model="form.repeat_interval" placeholder="4h" /></el-tooltip></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="限流窗口"><el-input v-model="form.throttle_window" placeholder="留空=repeat_interval" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="group_by"><el-input v-model="form.group_by_json" placeholder='["alertname","datasource_id"]' /></el-form-item>
