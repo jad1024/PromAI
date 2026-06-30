@@ -126,6 +126,23 @@ func dsID(s evaluator.Sample) uint {
 
 // Start 启动入站消费 + 调度循环
 func (d *Dispatcher) Start(ctx context.Context) {
+	// 启动时重置所有 pending/notified 分组的 next_notify_at = now，
+	// 避免从旧会话恢复的 next_notify_at 处于未来的时间点导致告警延迟派发。
+	now := time.Now()
+	result := database.DB.Model(&database.AlertGroup{}).
+		Where("state IN ? AND (next_notify_at IS NULL OR next_notify_at > ?)", []string{"pending", "notified"}, now).
+		Update("next_notify_at", now)
+	if result.Error == nil && result.RowsAffected > 0 {
+		log.Printf("[Alerting] dispatcher: 重置 %d 个分组的 next_notify_at 为当前时间", result.RowsAffected)
+	}
+	// 同时重置 pending/notified 分组中未来的 resolved_next_notify_at
+	result2 := database.DB.Model(&database.AlertGroup{}).
+		Where("state IN ? AND resolved_next_notify_at IS NOT NULL AND resolved_next_notify_at > ?", []string{"pending", "notified"}, now).
+		Update("resolved_next_notify_at", now)
+	if result2.Error == nil && result2.RowsAffected > 0 {
+		log.Printf("[Alerting] dispatcher: 重置 %d 个分组的 resolved_next_notify_at 为当前时间", result2.RowsAffected)
+	}
+
 	d.wg.Add(1)
 	go d.consumeLoop(ctx)
 	d.wg.Add(1)
@@ -198,7 +215,9 @@ func (d *Dispatcher) dispatchPending(ctx context.Context) {
 
 	var groups []database.AlertGroup
 	if err := database.DB.
-		Where("next_notify_at IS NOT NULL AND next_notify_at <= ? AND state IN ?", now, []string{"pending", "notified"}).
+		Where("state IN ?", []string{"pending", "notified"}).
+		Where(database.DB.Where("next_notify_at IS NOT NULL AND next_notify_at <= ?", now).
+			Or("resolved_next_notify_at IS NOT NULL AND resolved_next_notify_at <= ?", now)).
 		Limit(64).
 		Find(&groups).Error; err != nil {
 		return
@@ -245,9 +264,15 @@ func (d *Dispatcher) dispatchPending(ctx context.Context) {
 			if route != nil && route.SendResolved && g.AlertCount > 0 {
 				var resolved []database.AlertInstance
 				database.DB.Where("group_key = ? AND state = ?", g.GroupKey, "resolved").Find(&resolved)
-				if len(resolved) > 0 {
-					log.Printf("[Dispatch] group=%s 全部告警已恢复 → 发送恢复通知 (%d 条)", gkShort, len(resolved))
-					_ = d.notifier.SendResolvedGroup(ctx, g, resolved)
+				newResolved := make([]database.AlertInstance, 0, len(resolved))
+				for _, ri := range resolved {
+					if ri.ResolvedAt != nil && (g.LastNotifiedAt == nil || ri.ResolvedAt.After(*g.LastNotifiedAt)) {
+						newResolved = append(newResolved, ri)
+					}
+				}
+				if len(newResolved) > 0 {
+					log.Printf("[Dispatch] group=%s 全部告警已恢复 → 发送恢复通知 (%d 条)", gkShort, len(newResolved))
+					_ = d.notifier.SendResolvedGroup(ctx, g, newResolved)
 				}
 			} else {
 				log.Printf("[Dispatch] group=%s 已空 → 转 idle", gkShort)
@@ -255,9 +280,65 @@ func (d *Dispatcher) dispatchPending(ctx context.Context) {
 			now := time.Now()
 			g.State = "idle"
 			g.NextNotifyAt = nil
+			g.ResolvedNextNotifyAt = nil
 			g.LastNotifiedAt = &now
 			g.AlertCount = 0
 			_ = database.DB.Save(g).Error
+			continue
+		}
+
+		// 部分恢复：组内仍有活跃实例，但部分已恢复 → 聚合后发恢复通知
+		if route != nil && route.SendResolved && g.LastNotifiedAt != nil {
+			var resolved []database.AlertInstance
+			database.DB.Where("group_key = ? AND state = ?", g.GroupKey, "resolved").Find(&resolved)
+			newResolved := make([]database.AlertInstance, 0, len(resolved))
+			for _, ri := range resolved {
+				if ri.ResolvedAt != nil && ri.ResolvedAt.After(*g.LastNotifiedAt) {
+					newResolved = append(newResolved, ri)
+				}
+			}
+			if len(newResolved) > 0 {
+				// 批次窗口：先用 route.group_wait，兜底 30s
+				batchWindow := 30 * time.Second
+				if route != nil && route.GroupWait != "" {
+					if d, err := time.ParseDuration(route.GroupWait); err == nil && d > 0 {
+						batchWindow = d
+					}
+				}
+				if batchWindow < 10*time.Second {
+					batchWindow = 10 * time.Second
+				}
+
+				if g.ResolvedNextNotifyAt == nil {
+					// 首次发现新恢复实例 → 设定批次窗口
+					nextResolved := time.Now().Add(batchWindow)
+					g.ResolvedNextNotifyAt = &nextResolved
+					database.DB.Model(&database.AlertGroup{}).
+						Where("group_key = ?", g.GroupKey).
+						Update("resolved_next_notify_at", nextResolved)
+					log.Printf("[Dispatch] group=%s 调度恢复通知 (%d 条待聚合, %s 后发送)",
+						gkShort, len(resolved), batchWindow)
+				} else if g.ResolvedNextNotifyAt.Before(time.Now()) {
+					// 窗口到期 → 聚合并发送（含所有已恢复实例，不仅是新增的）
+					log.Printf("[Dispatch] group=%s 发送聚合恢复通知 (%d 条)", gkShort, len(resolved))
+					_ = d.notifier.SendResolvedGroup(ctx, g, resolved)
+					nowUpdate := time.Now()
+					g.LastNotifiedAt = &nowUpdate
+					g.ResolvedNextNotifyAt = nil
+					database.DB.Model(&database.AlertGroup{}).
+						Where("group_key = ?", g.GroupKey).
+						Updates(map[string]interface{}{
+							"last_notified_at":        nowUpdate,
+							"resolved_next_notify_at": nil,
+						})
+				}
+				// 窗口未到期 → 跳过本轮，让实例继续累积
+			}
+		}
+
+		// 如果本次仅因恢复通知到期而非发送通知到期 → 跳过后续发送流程
+		if g.NextNotifyAt != nil && g.NextNotifyAt.After(now) {
+			// 已在上方处理了恢复通知，无需继续
 			continue
 		}
 

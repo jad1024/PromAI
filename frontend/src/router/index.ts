@@ -120,6 +120,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/AlertHistory.vue'),
     meta: { title: '告警历史', icon: 'Histogram' },
   },
+  {
+    path: '/user-manual',
+    name: 'UserManual',
+    component: () => import('../views/UserManual.vue'),
+    meta: { title: '使用手册', icon: 'Reading' },
+  },
 ]
 
 const router = createRouter({

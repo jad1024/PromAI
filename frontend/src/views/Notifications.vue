@@ -230,6 +230,45 @@
               <el-checkbox v-model="tpl.show_time" @change="onTplChange">时间</el-checkbox>
               <el-checkbox v-model="tpl.show_detail_link" @change="onTplChange">详情链接</el-checkbox>
             </el-form-item>
+
+            <!-- 简易文本模板（仅 simple 风格生效） -->
+            <el-form-item label="文本模板" v-if="tpl.style === 'simple'">
+              <div style="width:100%;">
+                <div style="margin-bottom:8px;">
+                  <el-checkbox v-model="enableDefaultTpl" @change="onEnableDefaultTpl">
+                    自定义每项条目的文本格式（留空则使用上方字段排序）
+                  </el-checkbox>
+                </div>
+                <template v-if="enableDefaultTpl">
+                  <div class="editor-toolbar">
+                    <el-button size="small" @click="defaultTplDialog = true">
+                      <el-icon><FullScreen /></el-icon> 全屏编辑
+                    </el-button>
+                    <el-button size="small" @click="fillDefaultTpl('simple')">填入默认模板</el-button>
+                    <el-button size="small" @click="fillDefaultTpl('compact')">紧凑示例</el-button>
+                    <el-button size="small" type="danger" plain @click="clearDefaultTpl">恢复预设</el-button>
+                  </div>
+                  <el-input
+                    ref="defaultTplRef"
+                    v-model="tpl.default_template"
+                    @input="onTplChange"
+                    type="textarea"
+                    :rows="8"
+                    placeholder='例：🔴 {host} · {value}
+{content}
+🕐 {time}'
+                    style="font-family: 'SF Mono', Monaco, Menlo, monospace; font-size: 12px; line-height:1.5;"
+                  />
+                  <div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">
+                    可用占位符（点击插入）：
+                    <el-tooltip v-for="p in placeholders" :key="p.key" :content="p.desc" placement="top" :show-after="200">
+                      <el-tag size="small" style="margin:2px;cursor:pointer;" @click="insertPlaceholder(p.key)">{{ p.key }}</el-tag>
+                    </el-tooltip>
+                  </div>
+                </template>
+              </div>
+            </el-form-item>
+
             <el-row :gutter="12">
               <el-col :span="8">
                 <el-form-item label="数值精度">
@@ -443,14 +482,39 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 简易文本模板全屏编辑器 -->
+    <el-dialog v-model="defaultTplDialog" title="编辑文本模板" width="80%" top="8vh" destroy-on-close @opened="focusDialogTpl">
+      <div class="fullscreen-editor">
+        <div style="margin-bottom:8px;font-size:12px;color:var(--text-tertiary);">
+          可用占位符（点击插入）：
+          <el-tooltip v-for="p in placeholders" :key="p.key" :content="p.desc" placement="top" :show-after="200">
+            <el-tag size="small" style="margin:2px;cursor:pointer;" @click="insertPlaceholder(p.key)">{{ p.key }}</el-tag>
+          </el-tooltip>
+        </div>
+        <el-input
+          ref="defaultTplDialogRef"
+          v-model="tpl.default_template"
+          @input="onTplChange"
+          @keydown.tab.prevent="insertPlaceholder('\t')"
+          type="textarea"
+          :rows="22"
+          placeholder="编写每项条目的文本模板…"
+          style="font-family: 'SF Mono', Monaco, Menlo, monospace; font-size: 13px; line-height:1.6;"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="defaultTplDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive, watch } from 'vue'
+import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, RefreshLeft, ArrowDown, ArrowRight, DocumentCopy, EditPen } from '@element-plus/icons-vue'
+import { Refresh, RefreshLeft, ArrowDown, ArrowRight, DocumentCopy, EditPen, FullScreen } from '@element-plus/icons-vue'
 import type { FormInstance } from 'element-plus'
 import { getNotifications, createNotification, updateNotification, deleteNotification, testNotification, previewMessageTemplate, type MessageTemplate, type TemplatePreviewResult } from '../api'
 import type { NotificationChannel } from '../types'
@@ -496,10 +560,44 @@ const tpl = reactive<MessageTemplate>({
   title_format: '',
   custom_markdown: '',
   custom_subject: '',
+  default_template: '',
 })
 
 // 高级面板展开/折叠
 const advancedOpen = ref(false)
+// 简易文本模板
+const defaultTplDialog = ref(false)
+const enableDefaultTpl = computed(() => !!tpl.default_template)
+function onEnableDefaultTpl(val: boolean) {
+  if (val && !tpl.default_template) {
+    tpl.default_template = `🔴 {host} · {value}
+{content}
+🕐 {time}`
+  } else if (!val) {
+    tpl.default_template = ''
+  }
+  onTplChange()
+}
+const DEFAULT_TPL_PRESETS: Record<string, string> = {
+  simple: `🔴 {host} · {value}
+{content}
+🕐 {time}`,
+  compact: `▸ {host} · {value} > {threshold}{count}
+  数据源: {datasource}
+  告警内容: {content}
+  触发时间: {time}`,
+}
+function fillDefaultTpl(key: string) {
+  const s = DEFAULT_TPL_PRESETS[key]
+  if (s) {
+    tpl.default_template = s
+    onTplChange()
+  }
+}
+function clearDefaultTpl() {
+  tpl.default_template = ''
+  onTplChange()
+}
 
 // 文档里展示双花括号用的常量（避免 Vue 模板把 {{ ... }} 当插值）
 const OB = String.fromCharCode(123, 123)
@@ -541,6 +639,7 @@ function resetTpl() {
   tpl.title_format = ''
   tpl.custom_markdown = ''
   tpl.custom_subject = ''
+  tpl.default_template = ''
   advancedOpen.value = false
 }
 
@@ -562,8 +661,60 @@ function loadTplFromCfg() {
   tpl.title_format = t.title_format ?? ''
   tpl.custom_markdown = t.custom_markdown ?? ''
   tpl.custom_subject = t.custom_subject ?? ''
+  tpl.default_template = t.default_template ?? ''
   // 有自定义就自动展开
   advancedOpen.value = !!(t.custom_markdown || t.custom_subject)
+}
+
+// 文本模板编辑器 refs
+const defaultTplRef = ref<any>(null)
+const defaultTplDialogRef = ref<any>(null)
+
+// 占位符定义（key + 中文说明）
+const placeholders = [
+  { key: '{datasource}', desc: '数据源名称（如：sysucc-prometheus）' },
+  { key: '{content}',    desc: '告警内容（摘要 + value + 阈值）' },
+  { key: '{cause}',      desc: '可能原因（规则中填写的告警原因）' },
+  { key: '{impact}',     desc: '影响范围（规则中填写的影响范围）' },
+  { key: '{host}',       desc: '节点/主机标识（短名或完整名，由"主机格式"决定）' },
+  { key: '{value}',      desc: '当前值（格式化为指定精度）' },
+  { key: '{threshold}',  desc: '告警阈值' },
+  { key: '{count}',      desc: '命中处数 / 聚合数量（如：instances=3）' },
+  { key: '{time}',       desc: '触发时间（格式由"时间格式"决定）' },
+  { key: '{detail}',     desc: '查看详情的文本/链接' },
+]
+
+function insertPlaceholder(ph: string) {
+  let ta: HTMLTextAreaElement | null | undefined
+  const active = document.activeElement
+  if (active?.tagName === 'TEXTAREA') {
+    ta = active as HTMLTextAreaElement
+  } else {
+    ta = defaultTplRef.value?.textarea
+    if (!ta?.isConnected) {
+      ta = defaultTplDialogRef.value?.textarea
+    }
+  }
+  if (!ta) {
+    tpl.default_template += ph
+    onTplChange()
+    return
+  }
+  const start = ta.selectionStart
+  const end = ta.selectionEnd
+  const cur = tpl.default_template ?? ''
+  const before = cur.substring(0, start)
+  const after = cur.substring(end)
+  tpl.default_template = before + ph + after
+  onTplChange()
+  nextTick(() => {
+    ta!.focus()
+    ta!.selectionStart = ta!.selectionEnd = start + ph.length
+  })
+}
+
+function focusDialogTpl() {
+  nextTick(() => defaultTplDialogRef.value?.textarea?.focus())
 }
 
 function saveTplToCfg() {
@@ -971,5 +1122,16 @@ onMounted(fetchData)
   color: var(--cyan, #06b6d4);
   padding: 1px 5px;
   border-radius: 2px;
+}
+.editor-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.fullscreen-editor .el-textarea__inner {
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

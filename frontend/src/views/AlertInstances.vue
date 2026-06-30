@@ -107,6 +107,11 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="趋势" width="160" align="center">
+          <template #default="{ row }">
+            <Sparkline :data="trends[row.fingerprint]" />
+          </template>
+        </el-table-column>
         <el-table-column label="触发时间" width="170">
           <template #default="{ row }">
             <span style="font-size: 12px; color: var(--text-tertiary);">{{ formatTime(row.fired_at || row.active_at) }}</span>
@@ -252,9 +257,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
+import Sparkline from '../components/Sparkline.vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
-  getAlertInstances, getAlertInstance, createAlertSilence, clearAlertInstances,
+  getAlertInstances, getAlertInstance, getAlertInstancesTrend,
+  createAlertSilence, clearAlertInstances,
   getAllDataSources, getAlertRules, getAlertEvaluatorStatus, getAllNotifications,
 } from '../api'
 import type { AlertInstance, AlertHistoryRow, AlertRule, EvaluatorStatus } from '../types/alerting'
@@ -285,6 +292,7 @@ const detailRow = ref<AlertInstance | null>(null)
 const historyRows = ref<AlertHistoryRow[]>([])
 const notifyLogsRows = ref<any[]>([])
 
+const trends = ref<Record<string, [number, number][]>>({})
 const silenceDialog = ref(false)
 const silenceSaving = ref(false)
 const silenceForm = ref<{ comment: string; durationMin: number; matchers: Array<{ name: string; op: string; value: string }> }>({
@@ -327,6 +335,15 @@ async function refreshEvaluator() {
     const res = await getAlertEvaluatorStatus()
     evaluator.value = res.data
   } catch { evaluator.value = { running: false } }
+}
+
+async function loadTrends() {
+  const fps = rows.value.map(r => r.fingerprint)
+  if (fps.length === 0) { trends.value = {}; return }
+  try {
+    const res = await getAlertInstancesTrend(fps, 60)
+    trends.value = res.data
+  } catch { /* trend is optional */ }
 }
 
 async function loadMeta() {
@@ -487,9 +504,11 @@ let timer: number | null = null
 onMounted(async () => {
   await loadMeta()
   await fetchData()
+  await loadTrends()
   await refreshEvaluator()
-  timer = window.setInterval(() => {
-    fetchData()
+  timer = window.setInterval(async () => {
+    await fetchData()
+    await loadTrends()
     refreshEvaluator()
   }, 30000)
 })

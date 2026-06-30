@@ -87,6 +87,8 @@ export interface MessageTemplate {
   value_precision?: number
   max_entries?: number
   max_bytes?: number
+  // 简易文本模板（仅 simple 风格）：{datasource} {content} {time} 等占位符
+  default_template?: string
   // 高级：自定义 Go template
   custom_markdown?: string
   custom_subject?: string
@@ -217,6 +219,8 @@ export const getAlertInstances = (params?: {
 }) => api.get<{ items: AlertInstance[]; total: number; page: number; page_size: number }>('/alert/instances', { params })
 export const getAlertInstance = (fingerprint: string) =>
   api.get<{ instance: AlertInstance; history: AlertHistoryRow[]; notify_logs?: AlertNotifyLog[] }>(`/alert/instances/${fingerprint}`)
+export const getAlertInstancesTrend = (fingerprints: string[], minutes = 60) =>
+  api.post<Record<string, [number, number][]>>('/alert/instances/trend', { fingerprints, minutes })
 export const clearAlertInstances = () =>
   api.delete('/alert/instances')
 

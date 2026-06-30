@@ -311,18 +311,20 @@ func (sm *stateManager) flush() {
 			return nil
 		})
 	}
-	// 如果某组的所有实例均已恢复，立即拉近 next_notify_at，
-	// 让 dispatchPending 在下一 tick 发送恢复通知，避免等待 repeat_interval。
+	// 只有组内所有实例都恢复时，才拉近 next_notify_at 触发 dispatchPending 走「全恢复」路径。
+	// 部分恢复走 resolved_next_notify_at 机制，不应动 firing 定时器（否则 repeat_interval 形同虚设）。
+	nowForUpdate := time.Now()
 	for gk := range resolvedGroupKeys {
 		var activeCount int64
 		database.DB.Model(&database.AlertInstance{}).
 			Where("group_key = ? AND state IN ?", gk, []string{"pending", "firing"}).
 			Count(&activeCount)
-		if activeCount == 0 {
-			database.DB.Model(&database.AlertGroup{}).
-				Where("group_key = ?", gk).
-				Update("next_notify_at", time.Now())
+		if activeCount > 0 {
+			continue
 		}
+		database.DB.Model(&database.AlertGroup{}).
+			Where("group_key = ? AND (next_notify_at IS NULL OR next_notify_at > ?)", gk, nowForUpdate).
+			Update("next_notify_at", nowForUpdate)
 	}
 	if len(historyRows) > 0 {
 		_ = database.DB.CreateInBatches(historyRows, 100).Error

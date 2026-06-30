@@ -23,6 +23,7 @@ import (
 	"net/smtp"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -458,15 +459,42 @@ type aggregatedEntry struct {
 	sampleFps      []string            // 对应 fingerprint，用于详情链接
 }
 
-// aggregateInstances 按"告警内容"聚合：(rule_id, ds_id, 归一化 summary) 三元组。
+// labelIdentityKey 从实例标签中提取标识性 key，用于区分不同主机/设备。
+// 排除规则级别的通用标签（alertname、severity），保留 instance/job/device 等标识。
+func labelIdentityKey(labelsJSON string) string {
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(labelsJSON), &labels); err != nil || len(labels) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		if k == "alertname" || k == "severity" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteString("=")
+		b.WriteString(labels[k])
+		b.WriteString("|")
+	}
+	return b.String()
+}
+
+// aggregateInstances 按"告警内容" + "标识标签"聚合：
+// (rule_id, ds_id, 归一化 summary, 标签标识) 四元组。
 // 归一化 summary 会把数值（包括 {{ $value }} 渲染出的浮点）替换为 *，
 // 因此同一逻辑告警仅数值漂移的多次 firing 会被合并为一条，count++ 并保留 value 区间，
-// 而不同 mountpoint / device / instance 等会产生不同 summary 文本，各自独立条目，不漏告警。
+// 而不同 mountpoint / device / instance 等会产生不同的标签标识，各自独立条目，不漏告警。
 func aggregateInstances(instances []database.AlertInstance) []aggregatedEntry {
 	type bucketKey struct {
 		ruleID    uint
 		dsID      uint
 		summaryNk string // normalized summary
+		labelKey  string // identifying labels (host/device/instance)
 	}
 	buckets := make(map[bucketKey]*aggregatedEntry)
 	keys := make([]bucketKey, 0)
@@ -481,6 +509,7 @@ func aggregateInstances(instances []database.AlertInstance) []aggregatedEntry {
 			ruleID:    ai.RuleID,
 			dsID:      ai.DatasourceID,
 			summaryNk: normalizeSummary(summary),
+			labelKey:  labelIdentityKey(ai.LabelsJSON),
 		}
 		entry, ok := buckets[k]
 		if !ok {
@@ -652,7 +681,7 @@ func (n *Notifier) renderWithTemplate(group *database.AlertGroup, instances []da
 	}
 	titlePrefix := fmt.Sprintf("[%s]", sev)
 	if resolved {
-		titlePrefix = "[已恢复] " + sev
+		titlePrefix = fmt.Sprintf("[已恢复] [%s]", sev)
 	}
 	// 标题格式：用户自定义或默认
 	var title string
@@ -694,15 +723,18 @@ func (n *Notifier) renderWithTemplate(group *database.AlertGroup, instances []da
 	htmlBuf.WriteString(title)
 	htmlBuf.WriteString("</h2>")
 
-	if t.ShowCause && cause != "" {
-		mdBuf.WriteString(fmt.Sprintf("> **可能原因**: %s\n\n", cause))
-		htmlBuf.WriteString(fmt.Sprintf("<p><b>可能原因:</b> %s</p>", cause))
-		plainBuf.WriteString(fmt.Sprintf("可能原因: %s\n", cause))
-	}
-	if t.ShowImpact && impact != "" {
-		mdBuf.WriteString(fmt.Sprintf("> **影响范围**: %s\n\n", impact))
-		htmlBuf.WriteString(fmt.Sprintf("<p><b>影响范围:</b> %s</p>", impact))
-		plainBuf.WriteString(fmt.Sprintf("影响范围: %s\n", impact))
+	// 仅当未配置 Fields 时保持旧行为（顶层显示可能原因/影响范围）
+	if len(t.Fields) == 0 {
+		if t.ShowCause && cause != "" {
+			mdBuf.WriteString(fmt.Sprintf("> **可能原因**: %s\n\n", cause))
+			htmlBuf.WriteString(fmt.Sprintf("<p><b>可能原因:</b> %s</p>", cause))
+			plainBuf.WriteString(fmt.Sprintf("可能原因: %s\n", cause))
+		}
+		if t.ShowImpact && impact != "" {
+			mdBuf.WriteString(fmt.Sprintf("> **影响范围**: %s\n\n", impact))
+			htmlBuf.WriteString(fmt.Sprintf("<p><b>影响范围:</b> %s</p>", impact))
+			plainBuf.WriteString(fmt.Sprintf("影响范围: %s\n", impact))
+		}
 	}
 	htmlBuf.WriteString("<ul>")
 
@@ -823,23 +855,59 @@ func (n *Notifier) renderWithTemplate(group *database.AlertGroup, instances []da
 			}
 			mdChunk += "\n"
 		default: // simple
-			// 单条紧凑 3 行
-			mdChunk = fmt.Sprintf("▸ %s\n   value=%s / 阈值=%s%s\n",
-				e.summary, valStr, thStr, hitStr)
-			tail := []string{}
-			if timeStr != "" {
-				tail = append(tail, timeStr)
+			entryLabel := host
+			if entryLabel == "" {
+				entryLabel = fmt.Sprintf("#%d", i+1)
 			}
-			if dsStr != "" {
-				tail = append(tail, dsStr)
+			if t.DefaultTemplate != "" {
+				// 简易文本模板：用 {field} 占位符替换
+				mdChunk = renderDefaultTemplate(t.DefaultTemplate, e.summary, dname, host, valStr, thStr, e.count, timeStr, detailMD, cause, impact)
+				mdChunk += "\n"
+			} else {
+				// Quick-scan line: server · value > threshold · hit count
+				scan := entryLabel
+				if valStr != "" {
+					if e.threshold > 0 {
+						scan += fmt.Sprintf(" · %s > %s", valStr, thStr)
+					} else {
+						scan += fmt.Sprintf(" · %s", valStr)
+					}
+				}
+				scan += hitStr
+				mdChunk = fmt.Sprintf("▸ %s\n", scan)
+				// 字段列表：用户配置 > 默认（无 cause/impact）
+				fields := t.Fields
+				if len(fields) == 0 {
+					fields = []string{"datasource", "content", "time", "detail"}
+				}
+				for _, f := range fields {
+					switch f {
+					case "datasource":
+						if dsStr != "" {
+							mdChunk += fmt.Sprintf("  数据源: %s\n", dsStr)
+						}
+					case "content":
+						mdChunk += fmt.Sprintf("  告警内容: %s\n", e.summary)
+					case "cause":
+						if cause != "" {
+							mdChunk += fmt.Sprintf("  可能原因: %s\n", cause)
+						}
+					case "impact":
+						if impact != "" {
+							mdChunk += fmt.Sprintf("  影响范围: %s\n", impact)
+						}
+					case "time":
+						if timeStr != "" {
+							mdChunk += fmt.Sprintf("  触发时间: %s\n", timeStr)
+						}
+					case "detail":
+						if detailMD != "" {
+							mdChunk += fmt.Sprintf("  查看详情: %s\n", detailMD)
+						}
+					}
+				}
+				mdChunk += "\n"
 			}
-			if detailMD != "" {
-				tail = append(tail, detailMD)
-			}
-			if len(tail) > 0 {
-				mdChunk += "   " + strings.Join(tail, " · ") + "\n"
-			}
-			mdChunk += "\n"
 		}
 
 		// 字节预算
@@ -919,6 +987,22 @@ func (n *Notifier) renderWithTemplate(group *database.AlertGroup, instances []da
 		plain:    plainBuf.String(),
 		html:     htmlBuf.String(),
 	}
+}
+
+// renderDefaultTemplate 用 {field} 占位符替换渲染每项条目
+func renderDefaultTemplate(tmpl, summary, dname, host, valStr, thStr string, count int, timeStr, detailMD, cause, impact string) string {
+	out := tmpl
+	out = strings.ReplaceAll(out, "{datasource}", dname)
+	out = strings.ReplaceAll(out, "{content}", summary)
+	out = strings.ReplaceAll(out, "{cause}", cause)
+	out = strings.ReplaceAll(out, "{impact}", impact)
+	out = strings.ReplaceAll(out, "{time}", timeStr)
+	out = strings.ReplaceAll(out, "{detail}", detailMD)
+	out = strings.ReplaceAll(out, "{host}", host)
+	out = strings.ReplaceAll(out, "{value}", valStr)
+	out = strings.ReplaceAll(out, "{threshold}", thStr)
+	out = strings.ReplaceAll(out, "{count}", fmt.Sprintf("%d", count))
+	return out
 }
 
 // render 渲染告警消息（向后兼容：不指定模板时用默认）

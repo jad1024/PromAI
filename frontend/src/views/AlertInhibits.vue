@@ -54,6 +54,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Plus } from '@element-plus/icons-vue'
 import { getAlertInhibits, createAlertInhibit, updateAlertInhibit, deleteAlertInhibit } from '../api'
 import type { AlertInhibit } from '../types/alerting'
 const loading=ref(false);const items=ref<AlertInhibit[]>([])

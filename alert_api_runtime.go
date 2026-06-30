@@ -3,6 +3,7 @@ package main
 // 运行时相关的告警 API：实例 / 历史 / 分组 / 通知日志 / 统计 / 评估器状态。
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,7 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"PromAI/pkg/alerting/store"
 	"PromAI/pkg/database"
+	"PromAI/pkg/prometheus"
+
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 )
 
 // ===== AlertInstance =============================================================
@@ -102,6 +108,151 @@ func (a *AdminAPI) handleAlertInstances(w http.ResponseWriter, r *http.Request) 
 		"page":      page,
 		"page_size": pageSize,
 	})
+}
+
+func (a *AdminAPI) handleAlertInstancesTrend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req struct {
+		Fingerprints []string `json:"fingerprints"`
+		Minutes      int      `json:"minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if len(req.Fingerprints) == 0 {
+		writeError(w, 400, "fingerprints required")
+		return
+	}
+	if req.Minutes <= 0 || req.Minutes > 1440 {
+		req.Minutes = 60
+	}
+
+	// Load instances
+	var instances []database.AlertInstance
+	database.DB.Where("fingerprint IN ?", req.Fingerprints).Find(&instances)
+	instMap := make(map[string]*database.AlertInstance, len(instances))
+	for i := range instances {
+		instMap[instances[i].Fingerprint] = &instances[i]
+	}
+
+	// Load rules
+	ruleIDs := make(map[uint]bool)
+	for i := range instances {
+		ruleIDs[instances[i].RuleID] = true
+	}
+	var rules []database.AlertRule
+	if len(ruleIDs) > 0 {
+		ids := make([]uint, 0, len(ruleIDs))
+		for id := range ruleIDs {
+			ids = append(ids, id)
+		}
+		database.DB.Where("id IN ?", ids).Find(&rules)
+	}
+	ruleMap := make(map[uint]*database.AlertRule, len(rules))
+	for i := range rules {
+		ruleMap[rules[i].ID] = &rules[i]
+	}
+
+	// Load datasources
+	dsIDs := make(map[uint]bool)
+	for i := range instances {
+		dsIDs[instances[i].DatasourceID] = true
+	}
+	var dss []database.DataSource
+	if len(dsIDs) > 0 {
+		ids := make([]uint, 0, len(dsIDs))
+		for id := range dsIDs {
+			ids = append(ids, id)
+		}
+		database.DB.Where("id IN ?", ids).Find(&dss)
+	}
+	dsMap := make(map[uint]*database.DataSource, len(dss))
+	for i := range dss {
+		dsMap[dss[i].ID] = &dss[i]
+	}
+
+	// Group by (rule_id, datasource_id) for batch PromQL
+	type gk struct{ r, d uint }
+	groups := make(map[gk][]*database.AlertInstance)
+	for i := range instances {
+		inst := &instances[i]
+		k := gk{inst.RuleID, inst.DatasourceID}
+		groups[k] = append(groups[k], inst)
+	}
+
+	result := make(map[string][]model.SamplePair)
+
+	for key, insts := range groups {
+		rule, ok := ruleMap[key.r]
+		if !ok {
+			continue
+		}
+		ds, ok := dsMap[key.d]
+		if !ok {
+			continue
+		}
+
+		expr := rule.Expr
+		if expr == "" && rule.SourceType == "metric" && rule.MetricConfigID != nil {
+			if snap := store.Snapshot(); snap != nil {
+				if mc, ok := snap.MetricConfigs[*rule.MetricConfigID]; ok {
+					expr = mc.Query
+				}
+			}
+		}
+		if expr == "" {
+			continue
+		}
+
+		client, cErr := prometheus.DefaultCache.Get(ds.ID, ds.URL, ds.Username, ds.Password)
+		if cErr != nil {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		now := time.Now()
+		rng := v1.Range{
+			Start: now.Add(-time.Duration(req.Minutes) * time.Minute),
+			End:   now,
+			Step:  15 * time.Second,
+		}
+		val, _, qErr := client.API.QueryRange(ctx, expr, rng)
+		cancel()
+		if qErr != nil {
+			continue
+		}
+
+		matrix, ok := val.(model.Matrix)
+		if !ok {
+			continue
+		}
+
+		for _, inst := range insts {
+			var instLabels map[string]string
+			if err := json.Unmarshal([]byte(inst.LabelsJSON), &instLabels); err != nil || instLabels == nil {
+				continue
+			}
+			for _, ss := range matrix {
+				matches := true
+				for ln, lv := range ss.Metric {
+					if iv, ok := instLabels[string(ln)]; !ok || iv != string(lv) {
+						matches = false
+						break
+					}
+				}
+				if matches {
+					result[inst.Fingerprint] = ss.Values
+					break
+				}
+			}
+		}
+	}
+
+	writeJSON(w, result)
 }
 
 func (a *AdminAPI) handleAlertInstanceByFP(w http.ResponseWriter, r *http.Request) {

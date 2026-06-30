@@ -387,14 +387,15 @@ type AlertGroup struct {
 	DatasourceID uint   `gorm:"index" json:"datasource_id"`
 	RouteID      uint   `gorm:"index" json:"route_id"`
 	LabelsJSON   string `gorm:"type:text" json:"labels_json"`
-	AlertCount     int        `json:"alert_count"`
-	FirstSeenAt    time.Time  `json:"first_seen_at"`
-	LastNotifiedAt *time.Time `json:"last_notified_at,omitempty"`
-	NextNotifyAt   *time.Time `gorm:"index" json:"next_notify_at,omitempty"`
-	SendCount      int        `gorm:"default:0" json:"send_count"`
-	State          string     `gorm:"size:20;index" json:"state"` // idle/pending/notified
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	AlertCount          int        `json:"alert_count"`
+	FirstSeenAt         time.Time  `json:"first_seen_at"`
+	LastNotifiedAt      *time.Time `json:"last_notified_at,omitempty"`
+	NextNotifyAt        *time.Time `gorm:"index" json:"next_notify_at,omitempty"`
+	ResolvedNextNotifyAt *time.Time `json:"resolved_next_notify_at,omitempty"` // 恢复通知批次调度
+	SendCount           int        `gorm:"default:0" json:"send_count"`
+	State               string     `gorm:"size:20;index" json:"state"` // idle/pending/notified
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // AlertNotifyLog 通知发送日志

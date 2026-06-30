@@ -50,6 +50,16 @@ type MessageTemplate struct {
 	// 单条通知 markdown 字节上限，默认 3800；0 = 默认
 	MaxBytes int `json:"max_bytes,omitempty"`
 
+	// 字段顺序（仅 simple 风格生效）：datasource,content,cause,impact,time,detail
+	// 空值按默认顺序显示（datasource,content,time,detail，不含 cause/impact）
+	Fields []string `json:"fields,omitempty"`
+
+	// === 简易文本模板（仅 simple 风格） ===
+	// 纯文本 + {field} 占位符，供非技术用户自定义每项条目的显示格式
+	// 可用占位符: {datasource} {content} {cause} {impact} {time} {detail} {host} {value} {threshold} {count}
+	// 留空时使用上面的 Fields 排序逻辑
+	DefaultTemplate string `json:"default_template,omitempty"`
+
 	// === 高级：完全自定义 Go template ===
 	// 留空时使用预设风格；非空时优先使用，渲染错误会回退到预设并写日志
 	// 模板可用变量见 TemplateContext / TemplateEntry 结构注释
@@ -81,8 +91,10 @@ type resolvedTemplate struct {
 	ValuePrecision int
 	MaxEntries     int
 	MaxBytes       int
-	CustomMarkdown string
-	CustomSubject  string
+	Fields          []string
+	DefaultTemplate string
+	CustomMarkdown  string
+	CustomSubject   string
 }
 
 func (t *MessageTemplate) resolve() resolvedTemplate {
@@ -131,6 +143,12 @@ func (t *MessageTemplate) resolve() resolvedTemplate {
 	if t.MaxBytes > 0 {
 		r.MaxBytes = t.MaxBytes
 	}
+	if len(t.Fields) > 0 {
+		r.Fields = t.Fields
+	} else {
+		r.Fields = nil // 明确用 nil 表示"未配置"，让 render 走旧行为
+	}
+	r.DefaultTemplate = t.DefaultTemplate
 	r.CustomMarkdown = t.CustomMarkdown
 	r.CustomSubject = t.CustomSubject
 	return r
