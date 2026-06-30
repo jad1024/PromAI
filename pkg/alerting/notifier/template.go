@@ -77,20 +77,20 @@ func defaultTrue(p *bool) bool {
 
 // resolve 把 MessageTemplate 的所有字段填上默认值，便于 render 端无脑读取
 type resolvedTemplate struct {
-	Style          string
-	TitleFormat    string
-	ShowCause      bool
-	ShowImpact     bool
-	ShowValueRange bool
-	ShowHitCount   bool
-	ShowDatasource bool
-	ShowTime       bool
-	ShowDetailLink bool
-	HostFormat     string
-	TimeFormat     string
-	ValuePrecision int
-	MaxEntries     int
-	MaxBytes       int
+	Style           string
+	TitleFormat     string
+	ShowCause       bool
+	ShowImpact      bool
+	ShowValueRange  bool
+	ShowHitCount    bool
+	ShowDatasource  bool
+	ShowTime        bool
+	ShowDetailLink  bool
+	HostFormat      string
+	TimeFormat      string
+	ValuePrecision  int
+	MaxEntries      int
+	MaxBytes        int
 	Fields          []string
 	DefaultTemplate string
 	CustomMarkdown  string
