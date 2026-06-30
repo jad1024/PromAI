@@ -1,0 +1,22 @@
+#!/bin/sh
+# 禁止 kubehan 关键词出现在代码中
+set -e
+
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  against=HEAD
+else
+  against=4b825dc642cb6eb9a060e54bf899d153036c192f
+fi
+
+files=$(git diff --cached --name-only --diff-filter=ACMRT | head -c 3000000)
+if [ -z "$files" ]; then
+  exit 0
+fi
+
+matches=$(echo "$files" | grep -v '^\.githooks/' | xargs -I{} sh -c 'git show ":{}" 2>/dev/null | grep -c "kubehan" && echo "{}"' 2>/dev/null | grep -v "^0$" | head -20)
+
+if [ -n "$matches" ]; then
+  echo "错误: 以下文件包含敏感关键词，禁止提交:"
+  echo "$matches"
+  exit 1
+fi
