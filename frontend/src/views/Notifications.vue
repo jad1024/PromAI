@@ -672,7 +672,7 @@ const defaultTplDialogRef = ref<any>(null)
 
 // 占位符定义（key + 中文说明）
 const placeholders = [
-  { key: '{datasource}', desc: '数据源名称（如：sysucc-prometheus）' },
+  { key: '{datasource}', desc: '数据源名称（如：prometheus）' },
   { key: '{content}',    desc: '告警内容（摘要 + value + 阈值）' },
   { key: '{cause}',      desc: '可能原因（规则中填写的告警原因）' },
   { key: '{impact}',     desc: '影响范围（规则中填写的影响范围）' },
