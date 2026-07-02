@@ -4,7 +4,7 @@ import type {
   DataSource, MetricType, MetricConfig,
   NotificationChannel, CronJob, ReportRecord,
   InspectRecord, InspectRequest, DashboardStats,
-  SyncSource, SyncLog
+  SyncSource, SyncLog, AiSkill
 } from '../types'
 
 const api = axios.create({
@@ -260,5 +260,12 @@ export const getAlertNotifyLogs = (params?: {
 
 export const getAlertStats = () => api.get<AlertStats>('/alert/stats')
 export const getAlertEvaluatorStatus = () => api.get<EvaluatorStatus>('/alert/evaluator/status')
+
+// AI Skills (SKILL.md 规范 — 文件系统存储)
+export const getAISkills = () =>
+  api.get<{ items: AiSkill[]; total: number }>('/ai/skills')
+export const createAISkill = (s: AiSkill) => api.post<AiSkill>('/ai/skills', s)
+export const updateAISkill = (name: string, s: AiSkill) => api.post(`/ai/skills/${name}`, s)
+export const deleteAISkill = (name: string) => api.delete(`/ai/skills/${name}`)
 
 export default api

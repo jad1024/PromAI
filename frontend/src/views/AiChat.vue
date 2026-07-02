@@ -150,7 +150,9 @@ function shortId(id: string) {
 
 function renderContent(text: string): string {
   if (!text) return ''
-  return marked.parse(text) as string
+  // 剔除 <used-skill>xxx</used-skill> 标记（AI 用于汇报使用的 Skill，不给用户看）
+  const cleaned = text.replace(/<used-skill>\s*[a-z0-9][a-z0-9-]*\s*<\/used-skill>\s*/gi, '')
+  return marked.parse(cleaned) as string
 }
 
 async function sendMessage() {

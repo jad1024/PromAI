@@ -141,6 +141,18 @@ export interface SyncLog {
   created_at: string
 }
 
+// AiSkill 对应 OpenClaw SKILL.md 规范
+// 参考 https://docs.openclaw.ai/tools/skills
+export interface AiSkill {
+  name: string               // skill 标识符
+  description: string         // 一行描述
+  instruction: string         // SKILL.md markdown 正文
+  metadata?: string           // JSON: openclaw gating 条件
+  user_invocable?: boolean    // 是否可作为 slash 命令
+  enabled?: boolean
+  source?: string             // workspace | plugin | bundled
+}
+
 export interface InspectRequest {
   datasource_id?: number
   datasource_url?: string

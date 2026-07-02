@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func BuildSystemPrompt(cfg *config.Config, db *gorm.DB) string {
+func BuildSystemPrompt(cfg *config.Config, db *gorm.DB, skills []Skill) string {
 	var dsCount int64
 	db.Model(&databaseDataSource{}).Count(&dsCount)
 
@@ -53,6 +53,12 @@ func BuildSystemPrompt(cfg *config.Config, db *gorm.DB) string {
 - 任务完成后，先调用 query_task 获取完整的巡检结果，然后向用户给出分析结论（整体状态、告警数、严重/警告级别分布，以及 query_task 返回的异常明细中的每个异常指标的名称、当前值、阈值和所属分类），最后给出处理建议和可点击的报告链接
 - 用户要求推送报告时，使用 push_report 工具将报告推送到指定渠道
 - 用户要求推送自定义内容（如分析结论、处理建议等）时，使用 push_report 的 content 参数将文字推送到指定渠道`, cfg.ProjectName, cfg.PrometheusURL, dsCount, typeCount)
+
+	// 注入 Skills 指令包
+	skillsPrompt := BuildSkillsPrompt(skills)
+	if skillsPrompt != "" {
+		prompt += skillsPrompt
+	}
 
 	return prompt
 }

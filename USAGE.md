@@ -17,6 +17,7 @@ PromAI 是一个基于 Prometheus 的智能监控报告生成与巡检系统。�
 - [使用指南](#使用指南)
   - [Web 界面](#web-界面)
   - [API 接口](#api-接口)
+  - [AI Skills（技能管理）](#ai-skills技能管理)
   - [定时任务](#定时任务)
 - [常见问题](#常见问题)
 
@@ -253,9 +254,61 @@ PromAI 提供了一系列 API 用于集成和自动化。
   GET /api/promai/status?datasource=cluster1
   ```
 
-### 定时任务
+### AI Skills（技能管理）
 
-PromAI 内置 Cron 调度器。根据 `config.yaml` 中的 `cron_schedule` 配置，系统会自动执行巡检、生成报告并发送通知。无需人工干预。
+Skills 是基于 OpenClaw SKILL.md 规范的工作流指令包。它们不直接执行代码，而是指导 AI 如何组合使用已有工具（`query_metrics`、`exec`、`analyze_alert`、`push_report` 等）来完成监控场景任务。
+
+#### 管理页面
+
+在左侧导航栏 **AI 助手 → Skills** 进入技能管理页面。
+
+- **新建**：点右上角 `+`，填写 Name / Description / Instruction / Metadata，保存后自动生效
+- **编辑**：在左侧列表选中已有 Skill，修改后保存
+- **启用/禁用**：点击顶部的启用/禁用按钮控制，禁用的 Skill 不会被注入 AI 系统提示词
+- **删除**：选中 Skill 后点"删除"按钮
+
+#### 内置 Skills
+
+| 名称 | 描述 |
+|------|------|
+| `disk-check` | 磁盘使用率检查，结合 `query_metrics` 和 `exec` 定位大目录 |
+| `resource-analyze` | CPU/内存/负载/Swap 综合分析 |
+| `alert-root-cause` | 告警根因分析，关联指标和巡检记录 |
+| `inspect-report` | 触发巡检 → 轮询任务 → 推送报告到通知渠道 |
+| `node-health` | 一键节点健康检查（CPU/内存/磁盘/网络/运行时间） |
+| `datasource-check` | 检查数据源连通性、数据延迟和 Target 在线率 |
+
+#### 文件结构
+
+每个 Skill 对应 `skills/<名称>/SKILL.md` 文件，存储为 YAML frontmatter + Markdown 格式：
+
+```markdown
+---
+name: disk-check
+description: 检查磁盘使用率并给出处理建议
+user-invocable: true
+x-enabled: true
+metadata: {}
+---
+
+# 指令内容
+
+指导 AI 如何使用工具的 Markdown 正文。
+```
+
+可直接在文件系统中创建/编辑，但需要通过 Admin API 触发热加载生效。
+
+#### SKILL.md 参考
+
+| 字段 | 说明 |
+|------|------|
+| `name` | 唯一标识符（小写字母、数字、连字符） |
+| `description` | 单行描述（≤ 160 字符） |
+| `user-invocable` | 是否可作为 slash 命令（默认 true） |
+| `x-enabled` | 启用/禁用（默认 true，UI 切换此值） |
+| `metadata` | JSON 对象，用于 gating 条件（`requires.bins`、`requires.env`、`os` 等） |
+
+Instruction 正文中可引用平台内置工具：`query_metrics`、`analyze_alert`、`list_datasources`、`trigger_inspect`、`query_task`、`list_reports`、`get_report_detail`、`push_report`、`exec`。
 
 ## 常见问题
 

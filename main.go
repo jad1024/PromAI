@@ -301,7 +301,7 @@ func setupRoutes(collector *metrics.Collector, config *config.Config) *AdminAPI 
 	}
 
 	// 注册管理 API 路由
-	adminAPI = NewAdminAPI(collector, config)
+	adminAPI = NewAdminAPI(collector, config, database.DB)
 	adminAPI.RegisterHandlers(http.DefaultServeMux)
 
 	// 注册 AI Agent 路由

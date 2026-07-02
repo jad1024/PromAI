@@ -49,7 +49,12 @@
               </el-menu-item>
               <el-menu-item index="/datasources">
                 <el-icon><Connection /></el-icon>
-                <span>数据源管理</span>
+                <template #title>
+                  <span style="flex:1;">数据源管理</span>
+                  <el-tooltip content="此页面支持一键触发巡检" placement="right">
+                    <el-badge value="巡检" class="inspect-badge" />
+                  </el-tooltip>
+                </template>
               </el-menu-item>
               <el-menu-item index="/notifications">
                 <el-icon><Bell /></el-icon>
@@ -113,6 +118,10 @@
               <el-menu-item index="/ai">
                 <el-icon><MagicStick /></el-icon>
                 <span>AI 助手</span>
+              </el-menu-item>
+              <el-menu-item index="/skills">
+                <el-icon><Tools /></el-icon>
+                <span>Skill 管理</span>
               </el-menu-item>
               <el-menu-item index="/settings">
                 <el-icon><Setting /></el-icon>
@@ -492,4 +501,6 @@ function handleLogout() {
 }
 .alert-badge { --el-badge-bg-color: var(--red); margin-top: -2px; }
 .alert-badge :deep(.el-badge__content) { font-size: 11px; padding: 0 5px; height: 18px; line-height: 18px; border: none; }
+.inspect-badge { --el-badge-bg-color: var(--cyan); margin-top: -2px; margin-right: 12px; }
+.inspect-badge :deep(.el-badge__content) { font-size: 10px; padding: 0 5px; height: 16px; line-height: 16px; border: none; }
 </style>

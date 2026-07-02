@@ -83,6 +83,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/AiChat.vue'),
     meta: { title: 'AI 助手', icon: 'MagicStick' },
   },
+  {
+    path: '/skills',
+    name: 'Skills',
+    component: () => import('../views/Skills.vue'),
+    meta: { title: 'Skill 管理', icon: 'Tools' },
+  },
   // ===== Alerting =================================================================
   {
     path: '/alerts',

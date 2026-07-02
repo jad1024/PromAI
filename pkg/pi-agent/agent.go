@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ type sessionData struct {
 	modelName string
 }
 
+var ReloadSkillsFunc func()
+
 type AgentHandler struct {
 	config    *config.Config
 	collector *metrics.Collector
@@ -34,6 +37,19 @@ type AgentHandler struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionData
 	tools    []agent.AgentTool
+	skills   []Skill
+}
+
+func (h *AgentHandler) ReloadAllTools() {
+	h.tools = CreateAllTools(h.config, h.collector, &gormDBWrapper{db: h.db})
+	h.loadSkillsFromFS()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, sd := range h.sessions {
+		sd.agent.SetTools(h.tools)
+	}
+	log.Printf("[PiAgent] 已热重载所有工具 (含自定义 Skill)")
 }
 
 func NewAgentHandler(cfg *config.Config, collector *metrics.Collector, db *gorm.DB, jwtSecret string) *AgentHandler {
@@ -48,7 +64,136 @@ func NewAgentHandler(cfg *config.Config, collector *metrics.Collector, db *gorm.
 	}
 	h.tools = CreateAllTools(cfg, collector, &gormDBWrapper{db: db})
 	h.loadAIConfigFromDB()
+	h.loadSkillsFromFS()
+	ReloadSkillsFunc = h.ReloadAllTools
 	return h
+}
+
+func (h *AgentHandler) loadSkillsFromFS() {
+	skills, err := LoadSkillsFromDir(SkillsDir())
+	if err != nil {
+		log.Printf("[PiAgent] 加载 Skill 失败: %v", err)
+		return
+	}
+
+	h.mu.Lock()
+	h.skills = skills
+	h.mu.Unlock()
+
+	if len(skills) > 0 {
+		log.Printf("[PiAgent] 已加载 %d 个 Skill 指令包", len(skills))
+	}
+}
+
+// skillUsageRe 匹配 <used-skill>name</used-skill> 标记
+var skillUsageRe = regexp.MustCompile(`(?i)<used-skill>\s*([a-z0-9][a-z0-9-]*)\s*</used-skill>`)
+
+// stripSkillMarkers 从 AI 响应中剔除 <used-skill> 标记，用于用户展示
+func stripSkillMarkers(text string) string {
+	return strings.TrimSpace(skillUsageRe.ReplaceAllString(text, ""))
+}
+
+// parseUsedSkills 从 AI 响应中提取 <used-skill> 标记里的 skill 名
+func parseUsedSkills(text string) []string {
+	matches := skillUsageRe.FindAllStringSubmatch(text, -1)
+	seen := map[string]bool{}
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		name := strings.ToLower(strings.TrimSpace(m[1]))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
+}
+
+// recordSkillUsage 根据 AI 响应中的 <used-skill> 标记记录使用
+// 如果 AI 未输出标记（模型不遵守指令），回退到按 skill 名/描述关键字匹配
+func (h *AgentHandler) recordSkillUsage(sessionID, userMessage, assistantResponse string) {
+	// 首选：从 AI 响应中提取显式标记
+	names := parseUsedSkills(assistantResponse)
+
+	// 回退：模糊匹配（用户消息 + AI 响应），仅在 AI 未汇报时启用
+	if len(names) == 0 {
+		names = h.fuzzyMatchSkills(userMessage + "\n" + assistantResponse)
+	}
+
+	if len(names) == 0 {
+		return
+	}
+
+	// 仅记录当前启用的 Skill
+	enabled := map[string]bool{}
+	for _, s := range h.skills {
+		if s.Enabled {
+			enabled[strings.ToLower(s.Name)] = true
+		}
+	}
+	now := time.Now()
+	day := now.Format("2006-01-02")
+	valid := make([]string, 0, len(names))
+	for _, n := range names {
+		if !enabled[n] {
+			continue
+		}
+		h.db.Create(&database.SkillUsage{
+			SkillName: n,
+			SessionID: sessionID,
+			Day:       day,
+			CreatedAt: now,
+		})
+		valid = append(valid, n)
+	}
+	if len(valid) > 0 {
+		log.Printf("[PiAgent] 会话 %s 使用了 %d 个 Skill: %v", sessionID, len(valid), valid)
+	}
+}
+
+// fuzzyMatchSkills 通过关键字匹配（用户消息或 AI 响应中提到）猜测哪些 Skill 被使用
+func (h *AgentHandler) fuzzyMatchSkills(text string) []string {
+	low := strings.ToLower(text)
+	if low == "" {
+		return nil
+	}
+	matched := map[string]bool{}
+	for _, s := range h.skills {
+		if !s.Enabled {
+			continue
+		}
+		name := strings.ToLower(s.Name)
+
+		// 显式调用: /skill:name
+		if strings.Contains(low, "/skill:"+name) {
+			matched[name] = true
+			continue
+		}
+		// 完整名称
+		if strings.Contains(low, name) {
+			matched[name] = true
+			continue
+		}
+		// 拆词全部命中（disk-check → "disk" + "check" 都在文本里）
+		parts := strings.Split(name, "-")
+		if len(parts) >= 2 {
+			all := true
+			for _, p := range parts {
+				if len(p) < 3 || !strings.Contains(low, p) {
+					all = false
+					break
+				}
+			}
+			if all {
+				matched[name] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(matched))
+	for n := range matched {
+		names = append(names, n)
+	}
+	return names
 }
 
 func (h *AgentHandler) getModel(name string) *config.AIModelConfig {
@@ -251,7 +396,7 @@ func (h *AgentHandler) newAgent(modelName string) (*agent.Agent, string) {
 		log.Printf("[DEBUG] API key is EMPTY")
 	}
 
-	systemPrompt := BuildSystemPrompt(h.config, h.db)
+	systemPrompt := BuildSystemPrompt(h.config, h.db, h.skills)
 
 	level := ai.ThinkingLevelOff
 	switch mc.ThinkingLevel {
@@ -446,8 +591,11 @@ func (h *AgentHandler) handleChat(w http.ResponseWriter, r *http.Request) {
 		case *agent.AgentEventEnd:
 			writeSSE(w, map[string]string{"type": "done"})
 			flusher.Flush()
-			// Save assistant message
-			if content := strings.TrimSpace(assistantContent.String()); content != "" {
+			// 解析 <used-skill> 标记，或按关键字回退匹配，记录 Skill 使用
+			rawContent := assistantContent.String()
+			h.recordSkillUsage(sessionID, req.Message, rawContent)
+			// 剔除标记后再保存到 DB（用户看到的也是剔除后的版本）
+			if content := stripSkillMarkers(rawContent); content != "" {
 				h.db.Create(&database.AiMessage{
 					SessionID: sessionID,
 					Role:      "assistant",

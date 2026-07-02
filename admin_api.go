@@ -27,6 +27,7 @@ import (
 
 	"github.com/prometheus/common/model"
 	"github.com/robfig/cron/v3"
+	"gorm.io/gorm"
 )
 
 type InspectTask struct {
@@ -275,11 +276,12 @@ type AdminAPI struct {
 	authUser       string
 	authPass       string
 	jwtSecret      string
+	db             *gorm.DB
 	syncCronJobs   map[uint]cron.EntryID
 	syncCronJobsMu sync.Mutex
 }
 
-func NewAdminAPI(collector *metrics.Collector, cfg *config.Config) *AdminAPI {
+func NewAdminAPI(collector *metrics.Collector, cfg *config.Config, db *gorm.DB) *AdminAPI {
 	authUser := cfg.Auth.Username
 	authPass := cfg.Auth.Password
 	jwtSecret := cfg.Auth.JWTSecret
@@ -310,6 +312,7 @@ func NewAdminAPI(collector *metrics.Collector, cfg *config.Config) *AdminAPI {
 		authUser:     authUser,
 		authPass:     authPass,
 		jwtSecret:    jwtSecret,
+		db:           db,
 		syncCronJobs: make(map[uint]cron.EntryID),
 	}
 }
@@ -352,6 +355,12 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/inspect", logged(auth(a.handleInspect)))
 	mux.HandleFunc("/api/promai/inspect/records", logged(auth(a.handleInspectRecords)))
 	mux.HandleFunc("/api/promai/inspect/task/", logged(auth(a.handleInspectTask)))
+	mux.HandleFunc("/api/promai/ai/skills/manifest", logged(auth(a.handleAISkillManifest)))
+	mux.HandleFunc("/api/promai/ai/skills/stats/trend", logged(auth(a.handleAISkillTrend)))
+	mux.HandleFunc("/api/promai/ai/skills/stats", logged(auth(a.handleAISkillStats)))
+	mux.HandleFunc("/api/promai/ai/skills", logged(auth(a.handleAISkills)))
+	mux.HandleFunc("/api/promai/ai/skills/", logged(auth(a.handleAISkillByName)))
+	log.Printf("[AdminAPI] Skills 路由已注册: manifest/stats/skills/skills/")
 	mux.HandleFunc("/api/promai/dashboard/stats", logged(auth(a.handleDashboardStats)))
 	mux.HandleFunc("/api/promai/dashboard/health", logged(auth(a.handleDashboardHealth)))
 	mux.HandleFunc("/api/promai/dashboard/health/trend", logged(auth(a.handleDashboardHealthTrend)))
@@ -3402,4 +3411,196 @@ func restoreSensitiveFields(channelType, oldJSON, newJSON string) string {
 		return string(b)
 	}
 	return newJSON
+}
+
+func (a *AdminAPI) skillDir() string {
+	return piagent.SkillsDir()
+}
+
+func (a *AdminAPI) handleAISkills(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		skills, err := piagent.LoadSkillsFromDir(a.skillDir())
+		if err != nil {
+			log.Printf("[AdminAPI] 加载 Skills 失败: %v", err)
+			writeError(w, 500, "加载 Skills 失败")
+			return
+		}
+		writeJSON(w, map[string]any{"items": skills, "total": len(skills)})
+
+	case "POST":
+		var skill piagent.Skill
+		if err := json.NewDecoder(r.Body).Decode(&skill); err != nil {
+			writeError(w, 400, "请求体格式错误")
+			return
+		}
+		if skill.Name == "" {
+			writeError(w, 400, "名称不能为空")
+			return
+		}
+		if skill.Instruction == "" {
+			writeError(w, 400, "指令内容不能为空")
+			return
+		}
+		if _, err := piagent.ReadSkillFromDir(a.skillDir() + "/" + skill.Name); err == nil {
+			writeError(w, 409, "同名 Skill 已存在")
+			return
+		}
+		if err := piagent.WriteSkillToDir(a.skillDir(), skill); err != nil {
+			log.Printf("[AdminAPI] 创建 Skill 失败: %v", err)
+			writeError(w, 500, "创建 Skill 失败: "+err.Error())
+			return
+		}
+		a.reloadAgentSkills()
+		log.Printf("[AdminAPI] 创建 Skill: %s", skill.Name)
+		writeJSON(w, skill)
+
+	default:
+		writeError(w, 405, "仅支持 GET/POST 方法")
+	}
+}
+
+func (a *AdminAPI) handleAISkillByName(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/promai/ai/skills/"), "/")
+	if name == "" {
+		writeError(w, 400, "缺少技能名称")
+		return
+	}
+
+	switch r.Method {
+	case "GET":
+		skillDir := a.skillDir() + "/" + name
+		skill, err := piagent.ReadSkillFromDir(skillDir)
+		if err != nil {
+			writeError(w, 404, "Skill 不存在")
+			return
+		}
+		writeJSON(w, skill)
+
+	case "POST":
+		var skill piagent.Skill
+		if err := json.NewDecoder(r.Body).Decode(&skill); err != nil {
+			writeError(w, 400, "请求体格式错误")
+			return
+		}
+		skill.Name = name // 确保 name 和路径一致
+		if err := piagent.WriteSkillToDir(a.skillDir(), skill); err != nil {
+			log.Printf("[AdminAPI] 更新 Skill 失败: %v", err)
+			writeError(w, 500, "更新 Skill 失败: "+err.Error())
+			return
+		}
+		a.reloadAgentSkills()
+		log.Printf("[AdminAPI] 更新 Skill: %s", name)
+		writeJSON(w, skill)
+
+	case "DELETE":
+		if err := piagent.DeleteSkillFromDir(a.skillDir(), name); err != nil {
+			writeError(w, 404, "Skill 不存在")
+			return
+		}
+		a.reloadAgentSkills()
+		log.Printf("[AdminAPI] 删除 Skill: %s", name)
+		writeJSON(w, map[string]bool{"success": true})
+
+	default:
+		writeError(w, 405, "仅支持 GET/POST/DELETE 方法")
+	}
+}
+
+func (a *AdminAPI) handleAISkillManifest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "仅支持 GET 方法")
+		return
+	}
+	skills, err := piagent.LoadSkillsFromDir(a.skillDir())
+	if err != nil {
+		writeError(w, 500, "加载 Skills 失败")
+		return
+	}
+	type manifestEntry struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Enabled     bool   `json:"enabled"`
+		Invocable   bool   `json:"user_invocable"`
+	}
+	entries := make([]manifestEntry, 0, len(skills))
+	for _, s := range skills {
+		entries = append(entries, manifestEntry{
+			Name:        s.Name,
+			Description: s.Description,
+			Enabled:     s.Enabled,
+			Invocable:   s.UserInvocable,
+		})
+	}
+	writeJSON(w, map[string]any{
+		"source": "workspace",
+		"count":  len(entries),
+		"skills": entries,
+	})
+}
+
+type skillStat struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+}
+
+func (a *AdminAPI) handleAISkillStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "仅支持 GET 方法")
+		return
+	}
+	type result struct {
+		SkillName string `json:"skill_name"`
+		Count     int64  `json:"count"`
+	}
+	var rows []result
+	a.db.Model(&database.SkillUsage{}).
+		Select("skill_name, count(*) as count").
+		Group("skill_name").
+		Order("count desc").
+		Scan(&rows)
+	if rows == nil {
+		rows = []result{}
+	}
+	writeJSON(w, rows)
+}
+
+func (a *AdminAPI) handleAISkillTrend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "仅支持 GET 方法")
+		return
+	}
+	name := r.URL.Query().Get("name")
+	days := r.URL.Query().Get("days")
+	if days == "" {
+		days = "14"
+	}
+
+	type result struct {
+		Day   string `json:"day"`
+		Count int64  `json:"count"`
+	}
+	var rows []result
+	n, _ := strconv.Atoi(days)
+	if n <= 0 || n > 365 {
+		n = 14
+	}
+	since := time.Now().AddDate(0, 0, -n)
+	tx := a.db.Model(&database.SkillUsage{}).
+		Select("day, count(*) as count").
+		Where("day >= ?", since.Format("2006-01-02"))
+	if name != "" {
+		tx = tx.Where("skill_name = ?", name)
+	}
+	tx.Group("day").Order("day asc").Scan(&rows)
+	if rows == nil {
+		rows = []result{}
+	}
+	writeJSON(w, rows)
+}
+
+func (a *AdminAPI) reloadAgentSkills() {
+	if piagent.ReloadSkillsFunc != nil {
+		piagent.ReloadSkillsFunc()
+	}
 }

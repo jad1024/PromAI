@@ -208,6 +208,18 @@ type AiMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// SkillUsage 记录每次 AI 会话中 Skill 的曝光（被注入系统提示词）
+// 用于统计 Skill 使用趋势
+type SkillUsage struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	SkillName string    `gorm:"index:idx_skill_usage_name_day;size:100;not null" json:"skill_name"`
+	SessionID string    `gorm:"index;size:100;not null" json:"session_id"`
+	Day       string    `gorm:"index:idx_skill_usage_name_day;size:10;not null" json:"day"` // YYYY-MM-DD
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (SkillUsage) TableName() string { return "skill_usage" }
+
 // ===== Alerting 子系统模型 =====================================================
 //
 // AlertRule       告警规则定义（可复用 MetricConfig，也可自定义 PromQL）
@@ -431,6 +443,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&SyncLog{},
 		&AiSession{},
 		&AiMessage{},
+		&SkillUsage{},
 		// alerting
 		&AlertRule{},
 		&AlertInstance{},
