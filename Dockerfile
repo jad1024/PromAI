@@ -29,6 +29,7 @@ COPY --from=frontend-builder /build/dist ./frontend/dist/
 COPY deploy/sql ./deploy/sql/
 COPY templates ./templates/
 COPY config/config.yaml ./config/config.yaml
+COPY skills   ./skills/
 RUN mkdir -p /app/data /app/reports
 EXPOSE 8091
 VOLUME ["/app/data", "/app/reports"]
