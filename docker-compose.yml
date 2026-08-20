@@ -1,0 +1,30 @@
+services:
+  promai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: promai:latest
+    container_name: promai
+    restart: unless-stopped
+    ports:
+      - "8091:8091"
+    environment:
+      TZ: Asia/Shanghai
+      PROMAI_DB_PATH: /app/data/promai.db
+      # 推荐通过 .env 或命令行覆盖，不把 Prometheus 凭据写入 compose 文件
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      PROMETHEUS_USERNAME: ${PROMETHEUS_USERNAME:-}
+      PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:-}
+    volumes:
+      - promai-data:/app/data
+      - promai-reports:/app/reports
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/api/promai/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  promai-data:
+  promai-reports:
