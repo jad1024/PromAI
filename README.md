@@ -44,62 +44,78 @@
 
 排序、筛选和分页参数由前端统一提交给后端 API，由后端转换为数据库查询条件并返回分页结果。
 
-## 效果展示
-![xx](images/screenshot-02.png)
-![xx](images/screenshot-03.png)
-![xx](images/screenshot-04.png)
-![xx](images/screenshot-05.png)
-![xx](images/screenshot-06.png)
-![xx](images/screenshot-07.png)
-![xx](images/screenshot-01.png)
-![xx](images/image.png)
-![xx](images/image2.png)
 ## 快速开始
 
-### 源码编译
+### 推荐部署：Docker Compose
 
-1. 克隆仓库：
+现在推荐使用 Docker Compose，**不需要安装 Go、Node.js、npm，也不需要手工编译前后端**。
 
-   ```bash
-   git clone https://github.com/kubehan/PromAI.git
-   cd PromAI
-   ```
+```bash
+# 1. 获取项目
+ git clone https://github.com/jad1024/PromAI.git
+ cd PromAI
 
-2. 安装依赖：
+# 2. 配置 Prometheus
+cp .env.example .env
+vi .env
 
-   ```bash
-   go mod download
-   cd frontend && npm install && cd ..
-   ```
+# 3. 一键启动
+ docker compose up -d --build
+```
 
-3. 修改配置文件 `config/config.yaml`，设置 Prometheus 地址
+启动完成后访问：
 
-4. 构建前端 + 后端：
+```text
+http://服务器IP:8091/promai
+```
 
-   ```bash
-   cd frontend && npm run build 
-   cd ..
-   go build -o promai .
-   ```
+查看日志：
 
-5. 运行：
+```bash
+docker compose logs -f promai
+```
 
-   ```bash
-   ./promai
-   ```
+停止：
 
-   首次运行自动从 `config/config.yaml` 导入种子数据到 SQLite。
+```bash
+docker compose down
+```
 
-### 访问地址
+升级：
 
-| 用途 | 地址 |
-|------|------|
-| 首页 | http://localhost:8091/promai |
-| 健康大屏（BI） | http://localhost:8091/promai/bi |
-| 巡检报告 | http://localhost:8091/promai/reports |
-| 触发巡检 | http://localhost:8091/promai/inspection/ |
+```bash
+git pull
+docker compose up -d --build
+```
+
+数据默认保存在 Docker volume：
+
+```text
+promai-data       SQLite 数据库
+promai-reports    巡检报告
+```
+
+因此容器重建或升级不会丢失业务数据。
+
+### Docker 环境变量
+
+`.env` 示例：
+
+```env
+PROMETHEUS_URL=http://prometheus:9090
+PROMETHEUS_USERNAME=
+PROMETHEUS_PASSWORD=
+```
+
+如果 Prometheus 不在同一个 Docker Compose 网络中，直接填写实际地址，例如：
+
+```env
+PROMETHEUS_URL=http://192.168.1.100:9090
+```
 
 ### Helm 部署
+
+如果运行在 Kubernetes 环境，仍然可以使用 Helm：
 
 ```bash
 helm install promai ./deploy/helm/promai \
@@ -115,21 +131,27 @@ helm upgrade promai ./deploy/helm/promai \
   --set image.tag=v2.0.3
 ```
 
-常用配置：
+## 源码开发
 
-```yaml
-env:
-  reportUrl: "https://promai.example.com"
-bootstrapSql:
-  enabled: true
-  content: |
-    -- 自定义初始化 SQL
+如果需要本地开发，再使用源码方式：
+
+```bash
+go mod download
+cd frontend && npm install && npm run build && cd ..
+go build -o promai .
+./promai
 ```
 
-说明：
-- `env.reportUrl` 用于生成报告外链，推荐配置成外部可访问地址。
-- `deploy/helm/promai/files/metric_types_seed.sql` 是默认初始化 SQL。
-- 如果需要自定义初始化内容，直接改 `bootstrapSql.content` 或替换 `files/metric_types_seed.sql`。
+首次运行自动从 `config/config.yaml` 导入种子数据到 SQLite。
+
+## 访问地址
+
+| 用途 | 地址 |
+|------|------|
+| 管理后台 | http://localhost:8091/promai |
+| 健康大屏（BI） | http://localhost:8091/promai/bi |
+| 巡检报告 | http://localhost:8091/promai/reports |
+| 触发巡检 | http://localhost:8091/promai/inspection/ |
 
 ## 管理后台功能
 
@@ -178,6 +200,7 @@ data_sources:
 - ✅ PromQL 在线验证
 - ✅ 响应式设计
 - ✅ 管理后台列表统一支持列级筛选、排序、组合筛选和服务端分页
+- ✅ Docker Compose 一键部署
 
 ## 许可证
 
