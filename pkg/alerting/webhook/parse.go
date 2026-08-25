@@ -154,7 +154,11 @@ func parseN9EOne(raw map[string]interface{}) AlertEvent {
 //
 //	{"type":"notification","message":"<告警JSON字符串>",...}
 //
-// 首次订阅时 SMN 会推 SubscriptionConfirmation（需回访 subscribe_url 完成确认）。
+// message 内告警 JSON 存在两种形态：
+//  1. 新版（v1）：{"version":"v1","data":{"AlarmRuleName":"...","MetricName":"...",...}}
+//  2. 旧版（flat）：{"alarm_name":"...","alarm_status":"alarm","resource_name":"...",...}
+//
+// 首次订阅时 SMN 会推 SubscriptionConfirmation（需回访 subscribe_url 完成订阅确认）。
 func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -186,43 +190,151 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 		alarmRaw = map[string]interface{}{"message": msgStr}
 	}
 
+	// 兼容新版 v1：顶层 {version:"v1", data:{...}}，把 data 里的字段扁平合并到 alarmRaw
+	if ver := firstStr(alarmRaw, "version", "Version"); ver == "v1" {
+		if data, ok := alarmRaw["data"].(map[string]interface{}); ok {
+			// 保留原始 data JSON，便于完整查看
+			if b, err := json.Marshal(data); err == nil {
+				alarmRaw["_raw_data"] = string(b)
+			}
+			for k, v := range data {
+				if _, exists := alarmRaw[k]; !exists {
+					alarmRaw[k] = v
+				}
+			}
+		}
+	}
+
 	ev := AlertEvent{
 		SourceType:  "huaweicloud",
-		ExternalID:  firstStr(alarmRaw, "alarm_id", "alarmID", "metric_name") + "|" + firstStr(alarmRaw, "resource_name", "instance_id"),
-		RuleName:    firstStr(alarmRaw, "alarm_name", "alarmName"),
+		ExternalID:  firstStr(alarmRaw, "alarm_record_id", "AlarmRecordID", "alarm_id", "alarmID") + "|" + firstStr(alarmRaw, "resource_id", "ResourceID", "instance_id"),
 		State:       "firing",
 		Labels:      map[string]string{},
 		Annotations: map[string]string{},
 		OccurredAt:  time.Now(),
 	}
-	// 华为云状态：alarm / OK / insufficient_data
-	switch strings.ToLower(firstStr(alarmRaw, "alarm_status", "alarmStatus", "status")) {
-	case "ok", "resolved", "recovered":
-		ev.State = "resolved"
-	case "insufficient_data", "insufficient":
-		ev.State = "pending"
-	}
-	// 级别：1=紧急 2=重要 3=次要 4=提示
-	ev.Severity = parseSeverity(firstAny(alarmRaw, "alarm_level", "alarmLevel", "level"))
 
-	if s := firstStr(alarmRaw, "alarm_content", "alarmContent", "content"); s != "" {
-		ev.Annotations["summary"] = s
+	// 规则名：新版 AlarmRuleName / 旧版 alarm_name / alarmName；再 fallback 到 Namespace-MetricName
+	ruleName := firstStr(alarmRaw, "alarm_rule_name", "AlarmRuleName", "alarm_name", "alarmName", "metric_name", "MetricName")
+	if ruleName == "" {
+		ruleName = strings.TrimSpace(firstStr(alarmRaw, "namespace", "Namespace") + " " + firstStr(alarmRaw, "metric_name", "MetricName"))
 	}
-	if s := firstStr(alarmRaw, "metric_name", "metricName"); s != "" {
-		ev.Labels["metric"] = s
-	}
-	for _, k := range []string{"resource_name", "resource_id", "namespace", "dimensions", "region"} {
-		if s := firstStr(alarmRaw, k); s != "" {
-			ev.Labels[k] = s
+	ev.RuleName = ruleName
+
+	// 华为云状态：新版 IsAlarm (bool) / 旧版 alarm_status: alarm|OK|insufficient_data
+	if isAlarm := firstAny(alarmRaw, "is_alarm", "IsAlarm"); isAlarm != nil {
+		switch t := isAlarm.(type) {
+		case bool:
+			if !t {
+				ev.State = "resolved"
+			}
+		case string:
+			if strings.EqualFold(t, "false") || strings.EqualFold(t, "ok") {
+				ev.State = "resolved"
+			}
+		case float64:
+			if t == 0 {
+				ev.State = "resolved"
+			}
+		}
+	} else {
+		switch strings.ToLower(firstStr(alarmRaw, "alarm_status", "alarmStatus", "status")) {
+		case "ok", "resolved", "recovered":
+			ev.State = "resolved"
+		case "insufficient_data", "insufficient":
+			ev.State = "pending"
 		}
 	}
-	ev.Value = firstFloat(alarmRaw, "value", "current_value", "metric_value")
-	if s := firstStr(alarmRaw, "trigger_time", "triggerTime", "occur_time"); s != "" {
+
+	// 级别：新版 AlarmLevel 中文/英文 / 旧版 alarm_level 数值或中文
+	ev.Severity = parseSeverity(firstAny(alarmRaw, "alarm_level", "AlarmLevel", "alarmLevel", "level"))
+
+	// Labels：保留小写 snake_case key，统一内部命名
+	labelMap := map[string]string{
+		"namespace":       firstStr(alarmRaw, "namespace", "Namespace"),
+		"metric":          firstStr(alarmRaw, "metric_name", "MetricName"),
+		"resource_name":   firstStr(alarmRaw, "resource_name", "ResourceName"),
+		"resource_id":     firstStr(alarmRaw, "resource_id", "ResourceID"),
+		"region":          firstStr(alarmRaw, "region", "Region"),
+		"region_id":       firstStr(alarmRaw, "region_id", "RegionId"),
+		"private_ip":      firstStr(alarmRaw, "private_ip", "PrivateIP", "private_ipv6", "PrivateIPV6"),
+		"public_ip":       firstStr(alarmRaw, "public_ip", "PublicIP"),
+		"alarm_rule_name": firstStr(alarmRaw, "alarm_rule_name", "AlarmRuleName"),
+	}
+	for k, v := range labelMap {
+		if v != "" {
+			ev.Labels[k] = v
+		}
+	}
+
+	// Annotations：把关键可读信息都放进去，便于详情展示与飞书卡片
+	annoKeys := []string{
+		"alarm_desc", "AlarmDesc", "description",
+		"alarm_content", "alarmContent", "content",
+		"summary", "message",
+	}
+	if summary := firstStr(alarmRaw, annoKeys...); summary != "" {
+		ev.Annotations["summary"] = summary
+	}
+	for _, pair := range []struct{ k, label string }{
+		{"current_data", "CurrentData"},
+		{"comparison_operator", "ComparisonOperator"},
+		{"value", "Value"},
+		{"alarm_time", "AlarmTime"},
+		{"alarm_duration_time", "AlarmDurationTime"},
+		{"filter", "Filter"},
+		{"unit", "Unit"},
+		{"count", "Count"},
+		{"last_alarm_level", "LastAlarmLevel"},
+		{"account_name", "AccountName"},
+		{"ep_name", "EPName"},
+	} {
+		if v := firstStr(alarmRaw, pair.k, pair.label); v != "" {
+			ev.Annotations[pair.k] = v
+		}
+	}
+	if rawData := firstStr(alarmRaw, "_raw_data"); rawData != "" {
+		ev.Annotations["raw_data"] = rawData
+	}
+
+	// Value / Threshold
+	// 新版：CurrentData = "100.00 %" 是当前值；Value = "0%" 是阈值
+	if v := parsePercentOrNumber(firstStr(alarmRaw, "current_data", "CurrentData")); v != 0 {
+		ev.Value = v
+	} else {
+		ev.Value = firstFloat(alarmRaw, "value", "Value", "current_value", "metric_value")
+	}
+	if v := parsePercentOrNumber(firstStr(alarmRaw, "value", "Value")); v != 0 {
+		ev.Threshold = v
+	} else {
+		ev.Threshold = firstFloat(alarmRaw, "threshold", "trigger_threshold", "alert_threshold")
+	}
+
+	// 触发时间
+	if s := firstStr(alarmRaw, "alarm_time", "AlarmTime", "trigger_time", "triggerTime", "occur_time"); s != "" {
 		if t, err := parseFlexibleTime(s); err == nil {
 			ev.OccurredAt = t
 		}
 	}
+
+	if ev.ExternalID == "|" {
+		ev.ExternalID = fmt.Sprintf("%s|%s", ev.RuleName, hashLabels(ev.Labels))
+	}
 	return []AlertEvent{ev}, nil
+}
+
+// parsePercentOrNumber 从 "100.00 %" / "0%" / "12.5" 中解析数值。
+func parsePercentOrNumber(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	s = strings.ReplaceAll(s, "%", "")
+	s = strings.ReplaceAll(s, ",", "")
+	if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+		return f
+	}
+	return 0
 }
 
 // ParseAliyun 解析阿里云云监控（CloudMonitor）报警回调。
@@ -750,6 +862,7 @@ func parseFlexibleTime(s string) (time.Time, error) {
 		"2006-01-02 15:04:05",
 		"2006-01-02T15:04:05",
 		"2006/01/02 15:04:05",
+		"2006/01/02 15:04:05 GMT-07:00",
 		"2006-01-02 15:04",
 		time.RFC1123,
 	} {

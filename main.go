@@ -595,6 +595,22 @@ func sendJobNotifications(job database.CronJob, reportFilePath string, reportDat
 	}
 }
 
+// sendInspectionNotifications 统一处理巡检完成后的通知：
+//   - 若任务开启 AI 分析，只推送 AI 分析卡片，不再发送普通巡检报告；
+//   - 否则只发送普通巡检报告，且优先使用 job 级通道，避免与全局配置重复推送。
+func sendInspectionNotifications(config *config.Config, job database.CronJob, reportFilePath string, reportData *report.ReportData) {
+	if job.AiAnalysisEnabled {
+		runInspectionAIAnalysis(job, reportData, reportFilePath)
+		return
+	}
+	// 普通巡检：任务配置了通道就只用任务通道，否则回退到全局配置
+	if job.NotifyChannels != "" {
+		sendJobNotifications(job, reportFilePath, reportData)
+	} else {
+		sendNotifications(config, reportFilePath, reportData)
+	}
+}
+
 // runInspectionAIAnalysis 巡检完成后执行 AI 健康分析，并将分析结果推送到任务配置的飞书通道。
 // 仅当 job.AiAnalysisEnabled 为 true 时执行；分析结果同时持久化到 AiAnalysisRecord。
 func runInspectionAIAnalysis(job database.CronJob, reportData *report.ReportData, reportFilePath string) {
@@ -1325,9 +1341,7 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 			return false
 		}
 		saveReportRecord(data, reportFilePath)
-		sendNotifications(cfg, reportFilePath, data)
-		sendJobNotifications(job, reportFilePath, data)
-		runInspectionAIAnalysis(job, data, reportFilePath)
+		sendInspectionNotifications(cfg, job, reportFilePath, data)
 		reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
 		database.DB.Model(&database.InspectRecord{}).Where("task_id = ?", taskID).Updates(map[string]interface{}{
 			"status": "completed", "message": "巡检完成", "report_url": reportURL, "completed_at": time.Now(),
@@ -1387,9 +1401,7 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 		return false
 	}
 	saveReportRecord(data, reportFilePath)
-	sendNotifications(cfg, reportFilePath, data)
-	sendJobNotifications(job, reportFilePath, data)
-	runInspectionAIAnalysis(job, data, reportFilePath)
+	sendInspectionNotifications(cfg, job, reportFilePath, data)
 	reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
 	database.DB.Model(&database.InspectRecord{}).Where("task_id = ?", taskID).Updates(map[string]interface{}{
 		"status": "completed", "message": "巡检完成", "report_url": reportURL, "completed_at": time.Now(),

@@ -137,7 +137,7 @@
         <!-- n9e 凭据 -->
         <template v-if="form.type === 'n9e'">
           <el-form-item label="API Token">
-            <el-input v-model="form.n9e_token" type="password" show-password :placeholder="form.id ? '留空则不修改' : 'n9e 个人中心创建的 Token（推荐）'" maxlength="300" />
+            <el-input v-model="form.n9e_token" type="password" show-password :placeholder="'n9e 个人中心创建的 Token（推荐）'" maxlength="300" />
             <div class="form-tip">n9e v8.0.0-beta.5+ 官方认证方式：在 n9e 右上角头像 → 个人中心 → 「Token 管理」创建 Token（需 n9e 配置 <code>[HTTP.TokenAuth] Enable=true</code>）。填写后优先使用，无需账号密码。</div>
           </el-form-item>
           <el-form-item label="用户名">
@@ -180,13 +180,13 @@
 
         <el-form-item label="Webhook Token">
           <div style="display: flex; gap: 8px; width: 100%;">
-            <el-input v-model="form.token" :placeholder="form.id ? '留空则不修改' : '外部平台推送时的鉴权 token'" maxlength="200">
+            <el-input v-model="form.token" :placeholder="'外部平台推送时的鉴权 token（清空保存 = 移除鉴权）'" maxlength="200">
               <template #append>
                 <el-button @click="genToken"><el-icon><MagicStick /></el-icon> 生成</el-button>
               </template>
             </el-input>
           </div>
-          <div class="form-tip">推送请求须携带 <code>Authorization: Bearer &lt;token&gt;</code>；保存后列表不再明文显示。</div>
+          <div class="form-tip">推送请求须携带 <code>Authorization: Bearer &lt;token&gt;</code>。</div>
         </el-form-item>
 
         <el-form-item label="规则同步周期">
@@ -426,7 +426,9 @@ function openEdit(row: ExternalAlertSource) {
     sync_interval: row.sync_interval || '1h',
     notify_enabled: !!row.notify_enabled,
     ai_analysis_enabled: !!row.ai_analysis_enabled,
-    // secret_key / password / n9e_token / token 后端脱敏，编辑时留空表示不修改
+    // n9e_token / token 不再脱敏，编辑时回填真实值，可修改/清空（清空=移除鉴权）
+    n9e_token: row.n9e_token || '',
+    token: row.token || '',
   }
   dialogVisible.value = true
 }

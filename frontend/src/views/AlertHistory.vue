@@ -30,6 +30,9 @@
             <template #suffix><el-icon><Search /></el-icon></template>
           </el-input>
           <el-button plain @click="fetchData"><el-icon><Refresh /></el-icon></el-button>
+          <el-button type="danger" plain :disabled="items.length === 0" @click="clearAll">
+            <el-icon><Delete /></el-icon> 清空全部
+          </el-button>
         </div>
       </div>
 
@@ -81,6 +84,7 @@
             </div>
             <div class="event-actions">
               <el-button size="small" text style="color: var(--cyan);" @click="openDetail(row)">详情</el-button>
+              <el-button size="small" text type="danger" @click="deleteRow(row)">删除</el-button>
             </div>
           </div>
         </div>
@@ -153,7 +157,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
-import { getAlertHistorySessions, getAlertInstance, getAlertHistoryRuleNames, getAllDataSources } from '../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { getAlertHistorySessions, getAlertInstance, getAlertHistoryRuleNames, getAllDataSources, deleteAlertHistory } from '../api'
 import type { HistorySession, AlertHistoryRow } from '../types/alerting'
 import type { DataSource } from '../types'
 
@@ -275,6 +280,45 @@ async function openDetail(row: HistorySession) {
     const res = await getAlertInstance(row.fingerprint)
     historyRows.value = res.data.history || []
   } catch { /* ignore */ }
+}
+
+// 删除单条历史告警（按指纹删除该实例全部历史事件）
+async function deleteRow(row: HistorySession) {
+  if (!row.fingerprint) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${ruleNameDisplay(row.rule_name)}」的历史告警记录吗？删除后不可恢复。`,
+      '删除历史告警',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  try {
+    await deleteAlertHistory({ fingerprints: [row.fingerprint] })
+    ElMessage.success('已删除')
+    if (detailRow.value?.fingerprint === row.fingerprint) detailDrawer.value = false
+    fetchData()
+  } catch {
+    ElMessage.error('删除失败')
+  }
+}
+
+// 清空全部历史告警
+async function clearAll() {
+  try {
+    await ElMessageBox.confirm(
+      `确定清空全部历史告警记录吗？共 ${total.value} 条，删除后不可恢复。`,
+      '清空全部',
+      { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  try {
+    await deleteAlertHistory({ all: true })
+    ElMessage.success('已清空')
+    detailDrawer.value = false
+    fetchData()
+  } catch {
+    ElMessage.error('清空失败')
+  }
 }
 
 onMounted(async () => {

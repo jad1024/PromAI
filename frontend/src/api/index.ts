@@ -239,6 +239,10 @@ export const getAlertHistory = (params?: {
   event_type?: string; severity?: string; keyword?: string; from?: string; to?: string
 }) => api.get<{ items: AlertHistoryRow[]; total: number; page: number; page_size: number }>('/alert/history', { params })
 
+// 删除历史告警：{ fingerprints: [...] } 按指纹批量删，或 { all: true } 清空全部
+export const deleteAlertHistory = (payload: { fingerprints?: string[]; all?: boolean }) =>
+  api.delete<{ ok: boolean; deleted: number }>('/alert/history', { data: payload })
+
 // 已恢复告警实例聚合列表（历史页）：同一指纹合并为一条，只含已恢复的实例
 export const getAlertHistorySessions = (params?: {
   page?: number; page_size?: number; rule_id?: number; rule_name?: string; datasource_id?: number;

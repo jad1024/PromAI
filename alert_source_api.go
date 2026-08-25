@@ -535,12 +535,10 @@ func (a *AdminAPI) handleAlertSourceByID(w http.ResponseWriter, r *http.Request)
 		if req.Password != "" {
 			updates["password"] = req.Password
 		}
-		if req.N9eToken != "" {
-			updates["n9e_token"] = req.N9eToken
-		}
-		if req.Token != "" {
-			updates["token"] = req.Token
-		}
+		// n9e_token / token：直接覆盖（允许传空串清空，从而切回账号密码登录）。
+		// 前端编辑时回填真实 token，不再脱敏，避免错误 token 无法更新。
+		updates["n9e_token"] = req.N9eToken
+		updates["token"] = req.Token
 		if err := database.DB.Model(&database.ExternalAlertSource{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			writeError(w, 500, "更新告警源失败: "+err.Error())
 			return
@@ -836,8 +834,7 @@ func createSilenceForInstance(inst *database.AlertInstance, comment string, minu
 func sanitizeExternalSource(s *database.ExternalAlertSource) {
 	s.SecretKey = ""
 	s.Password = ""
-	s.N9eToken = ""
-	s.Token = ""
+	// n9e_token / token 不再脱敏：用户需要能在编辑时看到/修改/清空 token（否则填错的 token 永远无法更新）
 }
 
 func readBody(r *http.Request, max int64) ([]byte, error) {

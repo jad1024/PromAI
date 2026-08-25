@@ -284,9 +284,9 @@ export interface ExternalAlertSource {
   // n9e
   username?: string
   password?: string // 列表/详情接口返回时脱敏为空
-  n9e_token?: string // n9e v8+ 个人中心 X-User-Token（返回时脱敏为空），优先于账号密码
+  n9e_token?: string // n9e v8+ 个人中心 X-User-Token（编辑时回填真实值，可修改/清空），优先于账号密码
   // webhook 接收鉴权（返回时脱敏为空）
-  token?: string
+  token?: string // webhook 鉴权 token（编辑时回填真实值，可修改/清空，不再脱敏）
   sync_interval?: string // 30m / 1h / 1d
   last_sync_at?: string | null
   sync_status?: string // success / failed / pending / ''

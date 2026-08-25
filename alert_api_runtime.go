@@ -505,10 +505,44 @@ func instanceExternalSourceName(ai *database.AlertInstance) string {
 // ===== AlertHistory ==============================================================
 
 func (a *AdminAPI) handleAlertHistory(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
+	switch r.Method {
+	case "GET":
+		a.handleAlertHistoryQuery(w, r)
+	case "DELETE":
+		var body struct {
+			Fingerprints []string `json:"fingerprints"`
+			All          bool     `json:"all"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, 400, "请求体格式错误")
+			return
+		}
+		if !body.All && len(body.Fingerprints) == 0 {
+			writeError(w, 400, "缺少删除条件：fingerprints 或 all")
+			return
+		}
+		tx := database.DB.Begin()
+		if body.All {
+			if err := tx.Where("1 = 1").Delete(&database.AlertHistory{}).Error; err != nil {
+				tx.Rollback()
+				writeError(w, 500, "清空历史告警失败: "+err.Error())
+				return
+			}
+		} else {
+			if err := tx.Where("fingerprint IN ?", body.Fingerprints).Delete(&database.AlertHistory{}).Error; err != nil {
+				tx.Rollback()
+				writeError(w, 500, "删除历史告警失败: "+err.Error())
+				return
+			}
+		}
+		tx.Commit()
+		writeJSON(w, map[string]interface{}{"ok": true, "deleted": len(body.Fingerprints)})
+	default:
 		writeError(w, 405, "method not allowed")
-		return
 	}
+}
+
+func (a *AdminAPI) handleAlertHistoryQuery(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
 	q := database.DB.Model(&database.AlertHistory{})
 	if v := params.Get("rule_id"); v != "" {
