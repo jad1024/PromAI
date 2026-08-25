@@ -211,16 +211,20 @@ func ensureMetricCatalog(cfg *config.Config) error {
 			var existing MetricConfig
 			err := DB.Where("metric_type_id = ? AND datasource_id IS NULL AND name = ?", mType.ID, metric.Name).First(&existing).Error
 			payload := MetricConfig{
-				MetricTypeID:    mType.ID,
-				Name:            metric.Name,
-				Description:     metric.Description,
-				Query:           metric.Query,
-				Threshold:       metric.Threshold,
-				ThresholdType:   defaultThresholdType(metric.ThresholdType),
-				ThresholdStatus: defaultThresholdStatus(metric.ThresholdStatus),
-				Unit:            metric.Unit,
-				LabelsJSON:      marshalJSON(metric.Labels),
-				SortOrder:       j,
+				MetricTypeID:       mType.ID,
+				Name:               metric.Name,
+				Description:        metric.Description,
+				Query:              metric.Query,
+				Threshold:          metric.Threshold,
+				ThresholdType:      defaultThresholdType(metric.ThresholdType),
+				ThresholdStatus:    defaultThresholdStatus(metric.ThresholdStatus),
+				Unit:               metric.Unit,
+				LabelsJSON:         marshalJSON(metric.Labels),
+				SortOrder:          j,
+				BaselineEnabled:    metric.BaselineEnabled,
+				BaselineWindow:     metric.BaselineWindow,
+				BaselineZScore:     metric.BaselineZScore,
+				BaselineMinSamples: metric.BaselineMinSamples,
 			}
 			if err != nil {
 				if err == gorm.ErrRecordNotFound {
@@ -233,14 +237,18 @@ func ensureMetricCatalog(cfg *config.Config) error {
 				continue
 			}
 			if err := DB.Model(&existing).Updates(map[string]any{
-				"description":      payload.Description,
-				"query":            payload.Query,
-				"threshold":        payload.Threshold,
-				"threshold_type":   payload.ThresholdType,
-				"threshold_status": payload.ThresholdStatus,
-				"unit":             payload.Unit,
-				"labels_json":      payload.LabelsJSON,
-				"sort_order":       payload.SortOrder,
+				"description":         payload.Description,
+				"query":               payload.Query,
+				"threshold":           payload.Threshold,
+				"threshold_type":      payload.ThresholdType,
+				"threshold_status":    payload.ThresholdStatus,
+				"unit":                payload.Unit,
+				"labels_json":         payload.LabelsJSON,
+				"sort_order":          payload.SortOrder,
+				"baseline_enabled":    payload.BaselineEnabled,
+				"baseline_window":     payload.BaselineWindow,
+				"baseline_zscore":     payload.BaselineZScore,
+				"baseline_min_samples": payload.BaselineMinSamples,
 			}).Error; err != nil {
 				return err
 			}
@@ -288,11 +296,28 @@ func ensureAppSettings(cfg *config.Config) error {
 		"report_cleanup_cron":    cfg.ReportCleanup.CronSchedule,
 	}
 	for key, value := range settings {
-		if err := upsertAppSetting(key, value); err != nil {
+		var s AppSetting
+		err := DB.Where("key = ?", key).First(&s).Error
+		if err == gorm.ErrRecordNotFound {
+			// 仅首次初始化时以配置文件为默认值写入；
+			// 之后以系统设置页保存的值为准，避免每次启动用 config.yaml 覆盖页面配置
+			if err := DB.Create(&AppSetting{Key: key, Value: value}).Error; err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// GetAppSetting 读取系统设置项（空字符串表示不存在）
+func GetAppSetting(key string) string {
+	var s AppSetting
+	if err := DB.Where("key = ?", key).First(&s).Error; err != nil {
+		return ""
+	}
+	return s.Value
 }
 
 func InitializeTemplatesFromMetricTypes() error {
@@ -367,18 +392,6 @@ func ensureTemplateLinks(templateID uint, configs []MetricConfig) error {
 		}
 	}
 	return nil
-}
-
-func upsertAppSetting(key, value string) error {
-	var setting AppSetting
-	err := DB.Where("key = ?", key).First(&setting).Error
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return DB.Create(&AppSetting{Key: key, Value: value}).Error
-		}
-		return err
-	}
-	return DB.Model(&setting).Update("value", value).Error
 }
 
 func marshalJSON(v interface{}) string {

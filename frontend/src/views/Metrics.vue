@@ -39,12 +39,15 @@
             <code style="font-size: 11px; background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 6px; color: var(--text-tertiary); display: block; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.query }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="阈值" width="140">
+        <el-table-column label="阈值 / 基线" width="160">
           <template #default="{ row }">
-            <span v-if="row.threshold" style="color: var(--text-secondary); font-size: 13px;">
-              {{ thresholdOpLabel(row.threshold_type) }} {{ row.threshold }}{{ row.unit }}
-            </span>
-            <span v-else style="color: var(--text-tertiary);">-</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span v-if="row.threshold" style="color: var(--text-secondary); font-size: 13px;">
+                {{ thresholdOpLabel(row.threshold_type) }} {{ row.threshold }}{{ row.unit }}
+              </span>
+              <span v-else style="color: var(--text-tertiary);">-</span>
+              <el-tag v-if="row.baseline_enabled" size="small" style="background: rgba(168,85,247,0.15); color: #a855f7; border: none;">动态基线</el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="级别" width="90" align="center">
@@ -162,6 +165,31 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <el-form-item label="动态基线">
+          <el-switch v-model="configForm.baseline_enabled" active-text="启用（z-score / 3σ）" inactive-text="关闭（使用静态阈值）" />
+        </el-form-item>
+        <template v-if="configForm.baseline_enabled">
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-form-item label="历史窗口">
+                <el-input v-model="configForm.baseline_window" placeholder="7d" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="z-score 阈值">
+                <el-input v-model.number="configForm.baseline_zscore" type="number" step="0.5" placeholder="3.0" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="最少样本数">
+                <el-input v-model.number="configForm.baseline_min_samples" type="number" step="1" placeholder="10" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <div style="font-size: 11px; color: var(--text-tertiary); margin-top: -12px; margin-bottom: 8px;">
+            基于历史窗口的均值 / 标准差判断异常（|z| ≥ 阈值 → 警告，|z| ≥ 2×阈值 → 严重）；样本不足时自动回退静态阈值。窗口格式如 7d / 24h / 168h。
+          </div>
+        </template>
         <el-form-item label="单位">
           <el-input v-model="configForm.unit" placeholder="%, MB, ms" />
         </el-form-item>
@@ -246,7 +274,7 @@ const filterDS = ref<number | ''>('')
 const configDialog = ref(false)
 const editingConfigId = ref<number | null>(null)
 const configFormRef = ref<FormInstance>()
-const configForm = ref<MetricConfig>({ metric_type_id: 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '' })
+const configForm = ref<MetricConfig>({ metric_type_id: 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '', baseline_enabled: false, baseline_window: '7d', baseline_zscore: 3, baseline_min_samples: 10 })
 const labelsJsonStr = ref('')
 const validationResult = ref<any>(null)
 const configRules = {
@@ -313,7 +341,7 @@ async function fetchData() {
 
 function openCreateConfig() {
   editingConfigId.value = null
-  configForm.value = { metric_type_id: metricTypes.value[0]?.id || 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '' }
+  configForm.value = { metric_type_id: metricTypes.value[0]?.id || 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '', baseline_enabled: false, baseline_window: '7d', baseline_zscore: 3, baseline_min_samples: 10 }
   labelsJsonStr.value = ''
   validationResult.value = null
   configDialog.value = true

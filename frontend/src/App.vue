@@ -91,7 +91,7 @@
                   <el-icon><Warning /></el-icon>
                   <template #title>
                     <span style="flex:1;">实时告警</span>
-                    <el-badge :value="alertFiringCount" :hidden="alertFiringCount===0" class="alert-badge" />
+                    <el-badge :value="alertUnreadCount" :hidden="alertUnreadCount===0" class="alert-badge" />
                   </template>
                 </el-menu-item>
                 <el-menu-item index="/alert-rules">
@@ -109,6 +109,10 @@
                 <el-menu-item index="/alert-routes">
                   <el-icon><Share /></el-icon>
                   <span>通知路由</span>
+                </el-menu-item>
+                <el-menu-item index="/alert-sources">
+                  <el-icon><Link /></el-icon>
+                  <span>告警源管理</span>
                 </el-menu-item>
                 <el-menu-item index="/alert-history">
                   <el-icon><Histogram /></el-icon>
@@ -215,10 +219,10 @@ const showLayout = computed(() => route.path !== '/login')
 const username = ref(localStorage.getItem('username') || 'Admin')
 
 const { currentTheme, setTheme, themeOptions } = useTheme()
-const alertFiringCount = ref(0)
+const alertUnreadCount = ref(0)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 async function pollAlertCount() {
-  try { const r = await getAlertStats(); const s = r.data.by_state; alertFiringCount.value = s.find(x => x.State === 'firing')?.Count || 0 } catch {}
+  try { const r = await getAlertStats(); alertUnreadCount.value = r.data.unread_count || 0 } catch {}
 }
 onMounted(() => { pollAlertCount(); pollTimer = setInterval(pollAlertCount, 15000) })
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })

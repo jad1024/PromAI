@@ -65,7 +65,8 @@ func Reload() error {
 		inhibits []database.AlertInhibit
 		mcs      []database.MetricConfig
 	)
-	if err := db.Where("enabled = ?", true).Find(&rules).Error; err != nil {
+	// 快照仅服务本地评估器：external 规则（外部平台同步）不参与本地 PromQL 评估
+	if err := db.Where("enabled = ? AND source_type != ?", true, "external").Find(&rules).Error; err != nil {
 		return fmt.Errorf("load rules: %w", err)
 	}
 	for i := range rules {
@@ -135,6 +136,12 @@ func ListRules(db *gorm.DB, filter map[string]interface{}, page, pageSize int) (
 	if v, ok := filter["severity"]; ok && v != "" {
 		q = q.Where("severity = ?", v)
 	}
+	if v, ok := filter["origin"]; ok && v != "" {
+		q = q.Where("origin = ?", v)
+	}
+	if v, ok := filter["source_type"]; ok && v != "" {
+		q = q.Where("source_type = ?", v)
+	}
 	if v, ok := filter["keyword"]; ok && v != "" {
 		k := "%" + fmt.Sprint(v) + "%"
 		q = q.Where("name LIKE ? OR description LIKE ?", k, k)
@@ -169,6 +176,9 @@ func GetRule(db *gorm.DB, id uint) (*database.AlertRule, error) {
 }
 
 func CreateRule(db *gorm.DB, r *database.AlertRule) error {
+	if r.Origin == "" {
+		r.Origin = "manual" // 手动创建
+	}
 	encodeRuleRaw(r)
 	if err := db.Create(r).Error; err != nil {
 		return err
@@ -237,6 +247,7 @@ func GenerateRulesFromTemplate(db *gorm.DB, templateID uint) (int, error) {
 		rule := &database.AlertRule{
 			Name:           cfg.Name + " 告警",
 			SourceType:     "metric",
+			Origin:         "template", // 模板生成来源
 			MetricConfigID:  &cfg.ID,
 			TemplateID:     &tmplID,
 			Threshold:      cfg.Threshold,

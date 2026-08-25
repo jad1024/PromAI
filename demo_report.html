@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.Project}}</title>
+    <title>生产集群巡检报告（示例）</title>
     <script src="https://fastly.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -43,7 +43,7 @@
             overflow: hidden;
         }
 
-        /* ---------- 头部横幅 ---------- */
+         
         .report-header {
             background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #3b82f6 100%);
             color: #fff;
@@ -80,7 +80,7 @@
         .report-meta .meta-item b { color: #fff; font-weight: 600; }
         .report-body { padding: 28px 40px 40px; }
 
-        /* ---------- 概览卡片 ---------- */
+         
         .summary-cards {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -125,7 +125,7 @@
         }
         .stat-item .value .warning { color: var(--warning); }
 
-        /* ---------- 筛选按钮组（吸顶工具栏） ---------- */
+         
         .toolbar {
             position: sticky;
             top: 0;
@@ -179,7 +179,7 @@
         }
         .filter-btn.active .status-count { background: rgba(255, 255, 255, .25); color: #fff; }
 
-        /* ---------- 分节 ---------- */
+         
         .section { margin-bottom: 28px; }
         .section-header {
             display: flex;
@@ -222,7 +222,7 @@
         .section-content { transition: all .3s ease; overflow: hidden; }
         .section-content.collapsed { display: none; }
 
-        /* ---------- 图表 ---------- */
+         
         .chart-container {
             height: 400px;
             margin-bottom: 10px;
@@ -232,7 +232,7 @@
             background: #fff;
         }
 
-        /* ---------- 指标小节 ---------- */
+         
         .metric-title {
             margin: 22px 0 10px;
             font-size: 15px;
@@ -248,7 +248,7 @@
             font-size: 13px;
         }
 
-        /* ---------- 表格 ---------- */
+         
         table {
             width: 100%;
             border-collapse: separate;
@@ -282,7 +282,7 @@
         tbody tr { transition: background .15s; }
         tbody tr:hover { background: #f8fafc; }
 
-        /* 行状态（浅色左条 + 浅背景） */
+         
         tr.warning { background: var(--warning-bg) !important; }
         tr.warning td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
         tr.normal { background: var(--normal-bg) !important; }
@@ -291,7 +291,7 @@
         tr.critical td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
         tr.filtered { display: none; }
 
-        /* 状态徽章 */
+         
         .status-badge {
             display: inline-flex;
             align-items: center;
@@ -342,7 +342,7 @@
         .time-cell { color: var(--text-3); font-size: .92em; font-variant-numeric: tabular-nums; }
         .no-data-message { text-align: center; color: var(--text-3); padding: 14px; }
 
-        /* ---------- 响应式 ---------- */
+         
         @media screen and (max-width: 900px) {
             body { padding: 10px 6px 30px; }
             .report-header { padding: 24px 20px; }
@@ -352,7 +352,7 @@
             .toolbar { top: 0; }
         }
 
-        /* ---------- 打印 ---------- */
+         
         @media print {
             body { background: #fff; padding: 0; }
             .container { box-shadow: none; border-radius: 0; }
@@ -366,15 +366,15 @@
 <body>
     <div class="container">
         <header class="report-header">
-            <h1>{{.Project}}</h1>
+            <h1>生产集群巡检报告（示例）</h1>
             <div class="report-meta">
-                <span class="meta-item">生成时间&nbsp;<b>{{.Timestamp.Format "2006-01-02 15:04:05"}}</b></span>
-                <span class="meta-item">数据源&nbsp;<b>{{.Datasource}}</b></span>
+                <span class="meta-item">生成时间&nbsp;<b>2026-08-24 22:30:02</b></span>
+                <span class="meta-item">数据源&nbsp;<b>prometheus-prod</b></span>
             </div>
         </header>
         <main class="report-body">
 
-        <!-- 筛选按钮组 -->
+        
         <div class="toolbar">
             <span class="filter-label">状态筛选</span>
             <button class="filter-btn active" data-status="all">全部</button>
@@ -383,7 +383,7 @@
             <button class="filter-btn critical" data-status="critical">严重</button>
         </div>
 
-        <!-- 概览卡片 -->
+        
         <div class="section">
             <div class="section-header">
                 <h2>概览统计</h2>
@@ -391,39 +391,39 @@
             </div>
             <div class="section-content">
                 <div class="summary-cards">
-            {{range $type, $group := .MetricGroups}}
-            <div class="card {{$type}}">
-                <h3>{{$type}}</h3>
+            
+            <div class="card 主机">
+                <h3>主机</h3>
                 <div class="stats">
                     <div class="stat-item">
                         <div class="label">最大值</div>
-                        <div class="value">{{printf "%.2f" $group.Stats.MaxValue}}</div>
+                        <div class="value">96.30</div>
                     </div>
                     <div class="stat-item">
                         <div class="label">最小值</div>
-                        <div class="value">{{printf "%.2f" $group.Stats.MinValue}}</div>
+                        <div class="value">47.80</div>
                     </div>
                     <div class="stat-item">
                         <div class="label">告警数</div>
-                        <div class="value {{if gt $group.Stats.AlertCount 0}}alert{{end}}">
-                            {{$group.Stats.AlertCount}}/{{$group.Stats.TotalCount}}
+                        <div class="value alert">
+                            4/7
                         </div>
                     </div>
                     <div class="stat-item">
                         <div class="label">告警详情</div>
                         <div class="value">
-                            <span class="critical">严重 {{$group.Stats.CriticalCount}}</span>
-                            <span class="warning">警告 {{$group.Stats.WarningCount}}</span>
+                            <span class="critical">严重 2</span>
+                            <span class="warning">警告 2</span>
                         </div>
                     </div>
                 </div>
             </div>
-            {{end}}
+            
                 </div>
             </div>
         </div>
 
-        <!-- 图表部分 -->
+        
         <div class="section">
             <div class="section-header">
                 <h2>资源使用概览</h2>
@@ -436,84 +436,291 @@
             </div>
         </div>
 
-        <!-- 详细指标表格 -->
-        {{range $type, $group := .MetricGroups}}
+        
+        
         <div class="section">
             <div class="section-header">
-                <h2>{{$type}} 监控指标</h2>
+                <h2>主机 监控指标</h2>
                 <button class="toggle-btn" onclick="toggleSection(this)">收起</button>
             </div>
             <div class="section-content">
-                {{range $metricName := $group.MetricOrder}}
-                {{$metrics := index $group.MetricsByName $metricName}}
-                <div class="metric-title">{{$metricName}}</div>
-                {{if eq (len $metrics) 0 }}
-                <p class="no-data-message">未查询到数据</p>
-                {{end}}
-                {{if gt (len $metrics) 0}}
+                
+                
+                <div class="metric-title">CPU性能状态监控</div>
+                
+                
                 <table>
                     <thead>
                     <tr>
                         <th>指标名称</th>
-                        {{$headerLabels := (index $metrics 0).Labels}}
-                        {{range $headerLabels}}
-                            <th data-label-name="{{.Name}}">{{.Alias}}</th>
-                        {{end}}
+                        
+                        
+                            <th data-label-name="instance">实例</th>
+                        
                         <th>值</th>
                         <th>状态</th>
                         <th>检测时间</th>
                     </tr>
                     </thead>
                     <tbody>
-                    {{range $metric := $metrics}}
-                    <tr class="{{.Status}}">
-                        <td>{{.Name}}</td>
-                        {{range $headerLabels}}
-                            {{$labelName := .Name}}
-                            {{range $metricLabel := $metric.Labels}}
-                                {{if eq $metricLabel.Name $labelName}}
-                                    <td data-label-name="{{$labelName}}">
-                                        <span class="label-value">{{$metricLabel.Value}}</span>
+                    
+                    <tr class="critical">
+                        <td>CPU性能状态监控</td>
+                        
+                            
+                            
+                                
+                                    <td data-label-name="instance">
+                                        <span class="label-value">node-1:9100</span>
                                     </td>
-                                {{end}}
-                            {{end}}
-                        {{end}}
+                                
+                            
+                        
                         <td>
-                            <span class="metric-value">{{printf "%.2f" $metric.Value}}</span>{{$metric.Unit}}
-                            {{if $metric.BaselineEnabled}}
-                            <span class="baseline-info">动态基线 μ={{printf "%.2f" $metric.BaselineMean}} σ={{printf "%.2f" $metric.BaselineStdDev}} z={{printf "%.2f" $metric.BaselineZScore}} (样本 {{$metric.BaselineCount}})</span>
-                            {{end}}
+                            <span class="metric-value">96.30</span>%
+                            
                         </td>
                         <td>
-                            {{if eq .Status "normal"}}<span class="status-badge normal">正常</span>
-                            {{else if eq .Status "warning"}}<span class="status-badge warning">警告</span>
-                            {{else if eq .Status "critical"}}<span class="status-badge critical">严重</span>
-                            {{else}}<span class="status-badge">{{.Status}}</span>
-                            {{end}}
+                            <span class="status-badge critical">严重</span>
+                            
                         </td>
-                        <td class="time-cell">{{.Timestamp.Format "2006-01-02 15:04:05"}}</td>
+                        <td class="time-cell">2026-08-24 22:30:02</td>
                     </tr>
-                    {{end}}
+                    
+                    <tr class="warning">
+                        <td>CPU性能状态监控</td>
+                        
+                            
+                            
+                                
+                                    <td data-label-name="instance">
+                                        <span class="label-value">node-3:9100</span>
+                                    </td>
+                                
+                            
+                        
+                        <td>
+                            <span class="metric-value">83.70</span>%
+                            
+                        </td>
+                        <td>
+                            <span class="status-badge warning">警告</span>
+                            
+                        </td>
+                        <td class="time-cell">2026-08-24 22:30:02</td>
+                    </tr>
+                    
+                    <tr class="normal">
+                        <td>CPU性能状态监控</td>
+                        
+                            
+                            
+                                
+                                    <td data-label-name="instance">
+                                        <span class="label-value">node-2:9100</span>
+                                    </td>
+                                
+                            
+                        
+                        <td>
+                            <span class="metric-value">72.40</span>%
+                            
+                        </td>
+                        <td>
+                            <span class="status-badge normal">正常</span>
+                            
+                        </td>
+                        <td class="time-cell">2026-08-24 22:30:02</td>
+                    </tr>
+                    
                     </tbody>
                 </table>
-                {{end}}
-                {{end}}
+                
+                
+                
+                <div class="metric-title">存储设备状态监控</div>
+                
+                
+                <table>
+                    <thead>
+                    <tr>
+                        <th>指标名称</th>
+                        
+                        
+                            <th data-label-name="instance">实例</th>
+                        
+                            <th data-label-name="mountpoint">挂载点</th>
+                        
+                        <th>值</th>
+                        <th>状态</th>
+                        <th>检测时间</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    
+                    <tr class="critical">
+                        <td>存储设备状态监控</td>
+                        
+                            
+                            
+                                
+                                    <td data-label-name="instance">
+                                        <span class="label-value">node-1:9100</span>
+                                    </td>
+                                
+                            
+                                
+                            
+                        
+                            
+                            
+                                
+                            
+                                
+                                    <td data-label-name="mountpoint">
+                                        <span class="label-value">/home</span>
+                                    </td>
+                                
+                            
+                        
+                        <td>
+                            <span class="metric-value">91.20</span>%
+                            
+                        </td>
+                        <td>
+                            <span class="status-badge critical">严重</span>
+                            
+                        </td>
+                        <td class="time-cell">2026-08-24 22:30:02</td>
+                    </tr>
+                    
+                    <tr class="normal">
+                        <td>存储设备状态监控</td>
+                        
+                            
+                            
+                                
+                                    <td data-label-name="instance">
+                                        <span class="label-value">node-2:9100</span>
+                                    </td>
+                                
+                            
+                                
+                            
+                        
+                            
+                            
+                                
+                            
+                                
+                                    <td data-label-name="mountpoint">
+                                        <span class="label-value">/home</span>
+                                    </td>
+                                
+                            
+                        
+                        <td>
+                            <span class="metric-value">47.80</span>%
+                            
+                        </td>
+                        <td>
+                            <span class="status-badge normal">正常</span>
+                            
+                        </td>
+                        <td class="time-cell">2026-08-24 22:30:02</td>
+                    </tr>
+                    
+                    </tbody>
+                </table>
+                
+                
+                
+                <div class="metric-title">内存性能状态监控</div>
+                
+                
+                <table>
+                    <thead>
+                    <tr>
+                        <th>指标名称</th>
+                        
+                        
+                            <th data-label-name="instance">实例</th>
+                        
+                        <th>值</th>
+                        <th>状态</th>
+                        <th>检测时间</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    
+                    <tr class="warning">
+                        <td>内存性能状态监控</td>
+                        
+                            
+                            
+                                
+                                    <td data-label-name="instance">
+                                        <span class="label-value">node-1:9100</span>
+                                    </td>
+                                
+                            
+                        
+                        <td>
+                            <span class="metric-value">88.90</span>%
+                            
+                            <span class="baseline-info">动态基线 μ=61.20 σ=4.80 z=5.77 (样本 1440)</span>
+                            
+                        </td>
+                        <td>
+                            <span class="status-badge warning">警告</span>
+                            
+                        </td>
+                        <td class="time-cell">2026-08-24 22:30:02</td>
+                    </tr>
+                    
+                    <tr class="normal">
+                        <td>内存性能状态监控</td>
+                        
+                            
+                            
+                                
+                                    <td data-label-name="instance">
+                                        <span class="label-value">node-2:9100</span>
+                                    </td>
+                                
+                            
+                        
+                        <td>
+                            <span class="metric-value">54.10</span>%
+                            
+                        </td>
+                        <td>
+                            <span class="status-badge normal">正常</span>
+                            
+                        </td>
+                        <td class="time-cell">2026-08-24 22:30:02</td>
+                    </tr>
+                    
+                    </tbody>
+                </table>
+                
+                
             </div>
         </div>
-        {{end}}
+        
         </main>
     </div>
 
 <script>
-    // ---------- 图表初始化 ----------
+    
     const ctx = document.getElementById('resourceChart').getContext('2d');
-    const data = {{.ChartData.metricsData}};
+    const data = {"主机":{"Type":"主机","MetricsByName":{"CPU性能状态监控":[{"Instance":"","Name":"CPU性能状态监控","Description":"","Value":96.3,"Threshold":90,"ThresholdType":"","Unit":"%","Status":"critical","StatusText":"","Timestamp":"2026-08-24T22:30:02.6857996+08:00","Labels":[{"Name":"instance","Alias":"实例","Value":"node-1:9100"}]},{"Instance":"","Name":"CPU性能状态监控","Description":"","Value":83.7,"Threshold":90,"ThresholdType":"","Unit":"%","Status":"warning","StatusText":"","Timestamp":"2026-08-24T22:30:02.6857996+08:00","Labels":[{"Name":"instance","Alias":"实例","Value":"node-3:9100"}]},{"Instance":"","Name":"CPU性能状态监控","Description":"","Value":72.4,"Threshold":90,"ThresholdType":"","Unit":"%","Status":"normal","StatusText":"","Timestamp":"2026-08-24T22:30:02.6857996+08:00","Labels":[{"Name":"instance","Alias":"实例","Value":"node-2:9100"}]}],"内存性能状态监控":[{"Instance":"","Name":"内存性能状态监控","Description":"","Value":88.9,"Threshold":80,"ThresholdType":"","Unit":"%","Status":"warning","StatusText":"","Timestamp":"2026-08-24T22:30:02.6857996+08:00","Labels":[{"Name":"instance","Alias":"实例","Value":"node-1:9100"}],"baseline_enabled":true,"baseline_mean":61.2,"baseline_stddev":4.8,"baseline_count":1440,"baseline_zscore":5.77},{"Instance":"","Name":"内存性能状态监控","Description":"","Value":54.1,"Threshold":80,"ThresholdType":"","Unit":"%","Status":"normal","StatusText":"","Timestamp":"2026-08-24T22:30:02.6857996+08:00","Labels":[{"Name":"instance","Alias":"实例","Value":"node-2:9100"}]}],"存储设备状态监控":[{"Instance":"","Name":"存储设备状态监控","Description":"","Value":91.2,"Threshold":85,"ThresholdType":"","Unit":"%","Status":"critical","StatusText":"","Timestamp":"2026-08-24T22:30:02.6857996+08:00","Labels":[{"Name":"instance","Alias":"实例","Value":"node-1:9100"},{"Name":"mountpoint","Alias":"挂载点","Value":"/home"}]},{"Instance":"","Name":"存储设备状态监控","Description":"","Value":47.8,"Threshold":85,"ThresholdType":"","Unit":"%","Status":"normal","StatusText":"","Timestamp":"2026-08-24T22:30:02.6857996+08:00","Labels":[{"Name":"instance","Alias":"实例","Value":"node-2:9100"},{"Name":"mountpoint","Alias":"挂载点","Value":"/home"}]}]},"Stats":{"MaxValue":96.3,"MinValue":47.8,"Average":0,"AlertCount":4,"CriticalCount":2,"WarningCount":2,"TotalCount":7},"MetricOrder":["CPU性能状态监控","存储设备状态监控","内存性能状态监控"]}};
     const labels = [];
     const datasets = [];
 
-    // 获取CPU和内存数据（按主机）
+    
     function getHostMetricValues(metricName) {
-        const hostValues = new Map(); // 主机名 -> 值
+        const hostValues = new Map(); 
 
         for (const [type, group] of Object.entries(data)) {
             if (group.MetricsByName && group.MetricsByName[metricName]) {
@@ -531,7 +738,7 @@
         return { values: Array.from(hostValues.values()), labels: Array.from(hostValues.keys()) };
     }
 
-    // 获取磁盘数据（按主机和磁盘分区）
+    
     function getDiskMetricValues(filterMountpoints = null) {
         const diskData = [];
 
@@ -544,7 +751,7 @@
                     if (hostLabel && mountLabel) {
                         const mountpoint = mountLabel.Value;
 
-                        // 如果指定了筛选条件，只包含匹配的挂载点
+                        
                         if (filterMountpoints) {
                             if (Array.isArray(filterMountpoints)) {
                                 if (!filterMountpoints.includes(mountpoint)) continue;
@@ -566,13 +773,13 @@
         return diskData;
     }
 
-    // 获取各项指标数据
+    
     const cpuData = getHostMetricValues('CPU性能状态监控');
     const memoryData = getHostMetricValues('内存性能状态监控');
-    // 获取磁盘数据，只包含 /home 挂载点
+    
     const diskData = getDiskMetricValues('/home');
 
-    // 创建图表标签（合并主机和磁盘标签）
+    
     const allLabels = new Set([
         ...cpuData.labels,
         ...memoryData.labels,
@@ -580,7 +787,7 @@
     ]);
     const chartLabels = Array.from(allLabels);
 
-    // 按值着色：>=95 红、>=80 黄、其余绿
+    
     function getColorByValue(value) {
         if (value >= 95) return '#dc2626';
         if (value >= 80) return '#d97706';
@@ -602,11 +809,11 @@
         });
     }
 
-    // 对齐CPU和内存数据
+    
     const alignedCpuData = alignDataWithLabels(cpuData.values, cpuData.labels, chartLabels);
     const alignedMemoryData = alignDataWithLabels(memoryData.values, memoryData.labels, chartLabels);
 
-    // 对齐磁盘数据
+    
     const diskValues = chartLabels.map(label => {
         const disk = diskData.find(d => d.label === label);
         return disk ? disk.value : null;
@@ -674,7 +881,7 @@
         }
     });
 
-    // ---------- 展开 / 收起 ----------
+    
     function toggleSection(button) {
         const section = button.closest('.section');
         const content = section.querySelector('.section-content');
@@ -682,7 +889,7 @@
         button.textContent = isCollapsed ? '展开' : '收起';
     }
 
-    // 全局展开 / 收起
+    
     document.addEventListener('DOMContentLoaded', function() {
         const container = document.querySelector('.container');
         const globalToggleBtn = document.createElement('button');
@@ -707,12 +914,12 @@
         toolbar.appendChild(globalToggleBtn);
     });
 
-    // ---------- 状态筛选 ----------
+    
     document.addEventListener('DOMContentLoaded', function() {
         const filterButtons = document.querySelectorAll('.filter-btn');
         const rows = document.querySelectorAll('tbody tr');
 
-        // 更新状态计数
+        
         function updateStatusCounts() {
             const counts = { normal: 0, warning: 0, critical: 0 };
 
@@ -757,7 +964,7 @@
 
                 updateStatusCounts();
 
-                // 如果某个表格的所有行都被筛选掉了，显示提示
+                
                 const tables = document.querySelectorAll('table');
                 tables.forEach(table => {
                     const visibleRows = table.querySelectorAll('tbody tr:not(.filtered)');

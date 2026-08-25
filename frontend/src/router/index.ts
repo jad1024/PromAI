@@ -121,6 +121,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '通知路由', icon: 'Share' },
   },
   {
+    path: '/alert-sources',
+    name: 'AlertSources',
+    component: () => import('../views/AlertSources.vue'),
+    meta: { title: '告警源管理', icon: 'Link' },
+  },
+  {
     path: '/alert-history',
     name: 'AlertHistory',
     component: () => import('../views/AlertHistory.vue'),

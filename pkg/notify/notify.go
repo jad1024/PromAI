@@ -263,6 +263,146 @@ func SendFeishuWithContext(ctx context.Context, config FeishuConfig, reportPath 
 		return fmt.Errorf("JSON编码失败: %v", err)
 	}
 
+	return postFeishuMessage(ctx, config, jsonData)
+}
+
+// SendFeishuInspectionAnalysisCard 以飞书互动卡片（interactive card）推送 AI 巡检分析结果。
+// 相比纯文本：卡片标题头 + 元信息加粗分栏 + 分隔线 + lark_md 渲染正文（标题/加粗/列表自动转换），更直观可读。
+func SendFeishuInspectionAnalysisCard(ctx context.Context, config FeishuConfig, jobName, datasource, reportPath, aiText string) error {
+	if !config.Enabled {
+		log.Printf("飞书通知未启用，跳过 AI 巡检分析卡片发送")
+		return nil
+	}
+	if config.Webhook == "" {
+		return fmt.Errorf("飞书 webhook 未配置")
+	}
+
+	// 卡片正文（lark_md 子集：支持 **加粗**、[链接](url)、\n 换行）
+	md := feishuMD(aiText)
+	// 飞书单张卡片约 30KB 上限，保守截断避免发送失败
+	const maxRunes = 2800
+	if r := []rune(md); len(r) > maxRunes {
+		md = string(r[:maxRunes]) + "\n\n**…（内容过长已截断，完整内容见巡检报告）**"
+	}
+
+	metaLines := fmt.Sprintf("**⏰ 巡检时间**：%s\n**📋 巡检任务**：%s",
+		time.Now().Format("2006-01-02 15:04:05"), jobName)
+	if strings.TrimSpace(datasource) != "" {
+		metaLines += fmt.Sprintf("\n**📊 数据源**：%s", datasource)
+	}
+	if strings.TrimSpace(reportPath) != "" {
+		metaLines += fmt.Sprintf("\n**📄 巡检报告**：%s", reportPath)
+	}
+
+	card := map[string]interface{}{
+		"config": map[string]interface{}{"wide_screen_mode": true},
+		"header": map[string]interface{}{
+			"title":    map[string]interface{}{"tag": "plain_text", "content": fmt.Sprintf("🤖 AI 巡检分析 · %s", jobName)},
+			"template": "blue",
+		},
+		"elements": []interface{}{
+			map[string]interface{}{
+				"tag":  "div",
+				"text": map[string]interface{}{"tag": "lark_md", "content": metaLines},
+			},
+			map[string]interface{}{"tag": "hr"},
+			map[string]interface{}{
+				"tag":  "div",
+				"text": map[string]interface{}{"tag": "lark_md", "content": md},
+			},
+			map[string]interface{}{
+				"tag": "note",
+				"elements": []interface{}{
+					map[string]interface{}{"tag": "plain_text", "content": "由 PromAI AI 巡检自动生成"},
+				},
+			},
+		},
+	}
+	payload := map[string]interface{}{"msg_type": "interactive", "card": card}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("JSON编码失败: %v", err)
+	}
+	return postFeishuMessage(ctx, config, jsonData)
+}
+
+// feishuMD 将 AI 输出的 markdown 轻量转换为飞书 lark_md 友好格式：
+// #/##/### 标题 → 加粗；- /* 列表 → 圆点；剔除 markdown 表格分隔行（lark_md 不支持表格）。
+func feishuMD(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		// markdown 表格分隔行（|---|---|）直接丢弃
+		if t != "" && strings.HasPrefix(t, "|") && strings.Contains(t, "-") && !strings.ContainsAny(strings.ReplaceAll(t, "|", ""), "0123456789abcdefghijklmnopqrstuvwxyz") {
+			continue
+		}
+		// 标题 → 加粗
+		if strings.HasPrefix(t, "#") {
+			heading := strings.TrimLeft(t, "#")
+			heading = strings.TrimSpace(strings.TrimLeft(heading, " "))
+			if heading != "" {
+				heading = strings.Trim(heading, "*")
+				out = append(out, "\n**"+heading+"**")
+				continue
+			}
+		}
+		// 列表符号统一为圆点
+		if strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ") {
+			t = "• " + strings.TrimSpace(t[2:])
+		} else if strings.HasPrefix(t, "1. ") || strings.HasPrefix(t, "2. ") || strings.HasPrefix(t, "3. ") {
+			t = "• " + strings.TrimSpace(t[3:])
+		}
+		out = append(out, ln)
+	}
+	return strings.Join(out, "\n")
+}
+
+// SendFeishuText 发送一条简单的飞书文本消息（post 富文本）。
+// 用于推送 AI 巡检分析结果、根因分析结论等纯文本内容，与 SendFeishuWithContext 共用签名与发送逻辑。
+func SendFeishuText(ctx context.Context, config FeishuConfig, title, text string) error {
+	if !config.Enabled {
+		log.Printf("飞书通知未启用，跳过文本消息发送")
+		return nil
+	}
+	if config.Webhook == "" {
+		return fmt.Errorf("飞书 webhook 未配置")
+	}
+	// 飞书单条 post 消息有长度限制，超长截断避免发送失败
+	const maxRunes = 4000
+	if r := []rune(text); len(r) > maxRunes {
+		text = string(r[:maxRunes]) + "\n\n...(内容过长已截断)"
+		log.Printf("飞书文本消息超长，已截断至 %d 字", maxRunes)
+	}
+
+	messageContent := map[string]interface{}{
+		"msg_type": "post",
+		"content": map[string]interface{}{
+			"post": map[string]interface{}{
+				"zh_cn": map[string]interface{}{
+					"title": title,
+					"content": []interface{}{
+						[]interface{}{
+							map[string]interface{}{
+								"tag":  "text",
+								"text": text,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	jsonData, err := json.Marshal(messageContent)
+	if err != nil {
+		log.Printf("JSON编码失败: %v", err)
+		return fmt.Errorf("JSON编码失败: %v", err)
+	}
+	return postFeishuMessage(ctx, config, jsonData)
+}
+
+// postFeishuMessage 统一处理飞书消息发送：签名校验、HTTP 请求、响应校验
+func postFeishuMessage(ctx context.Context, config FeishuConfig, jsonData []byte) error {
 	// 处理签名：如果启用了签名验证并且提供了 secret，则按飞书签名规则追加 timestamp/sign
 	webhook := config.Webhook
 	if config.VerifySign {
@@ -307,6 +447,97 @@ func SendFeishuWithContext(ctx context.Context, config FeishuConfig, reportPath 
 	}
 
 	log.Printf("飞书通知发送成功")
+	return nil
+}
+
+// SendDingtalkText 发送钉钉文本消息（用于外部告警等简单推送）
+func SendDingtalkText(ctx context.Context, config DingtalkConfig, title, text string) error {
+	if !config.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(config.Webhook) == "" {
+		return fmt.Errorf("钉钉 webhook 未配置")
+	}
+	webhook := config.Webhook
+	if strings.TrimSpace(config.Secret) != "" {
+		timestamp := time.Now().UnixMilli()
+		sign := calculateDingtalkSign(timestamp, config.Secret)
+		webhook = fmt.Sprintf("%s&timestamp=%d&sign=%s", config.Webhook, timestamp, sign)
+	}
+	content := title
+	if text != "" {
+		content += "\n\n" + text
+	}
+	if r := []rune(content); len(r) > 4000 {
+		content = string(r[:4000]) + "\n\n...(内容过长已截断)"
+	}
+	payload := map[string]interface{}{
+		"msgtype": "text",
+		"text":    map[string]interface{}{"content": content},
+	}
+	return postNotifyJSON(ctx, webhook, payload, "钉钉")
+}
+
+// SendWeChatWorkText 发送企业微信机器人文本消息
+func SendWeChatWorkText(ctx context.Context, config WeChatWorkConfig, title, text string) error {
+	if !config.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(config.Webhook) == "" {
+		return fmt.Errorf("企业微信 webhook 未配置")
+	}
+	content := title
+	if text != "" {
+		content += "\n\n" + text
+	}
+	if r := []rune(content); len(r) > 4000 {
+		content = string(r[:4000]) + "\n\n...(内容过长已截断)"
+	}
+	payload := map[string]interface{}{
+		"msgtype": "text",
+		"text":    map[string]interface{}{"content": content},
+	}
+	return postNotifyJSON(ctx, config.Webhook, payload, "企业微信")
+}
+
+// SendWebhookText 发送通用 HTTP webhook（JSON: {"title","text"}）
+func SendWebhookText(ctx context.Context, config WebhookConfig, title, text string) error {
+	if !config.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(config.URL) == "" {
+		return fmt.Errorf("webhook url 未配置")
+	}
+	payload := map[string]string{"title": title, "text": text}
+	return postNotifyJSON(ctx, config.URL, payload, "Webhook")
+}
+
+// postNotifyJSON 通用 POST JSON 发送
+func postNotifyJSON(ctx context.Context, target string, payload interface{}, name string) error {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("%s JSON编码失败: %v", name, err)
+		return fmt.Errorf("%s JSON编码失败: %v", name, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", target, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("%s 创建请求失败: %v", name, err)
+		return fmt.Errorf("%s 创建请求失败: %v", name, err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("%s 发送请求失败: %v", name, err)
+		return fmt.Errorf("%s 发送请求失败: %v", name, err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("%s 发送失败，状态码: %d, 响应: %s", name, resp.StatusCode, string(respBody))
+		return fmt.Errorf("%s 发送失败，状态码: %d", name, resp.StatusCode)
+	}
+	log.Printf("%s 文本消息发送成功", name)
 	return nil
 }
 

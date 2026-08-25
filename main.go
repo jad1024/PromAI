@@ -114,8 +114,17 @@ func main() {
 	// 设置 HTTP 路由
 	setupRoutes(collector, config)
 
+	// 系统设置页保存的定时巡检表达式优先于 config.yaml（DB 持久化）
+	if v := database.GetAppSetting("cron_schedule"); v != "" && v != config.CronSchedule {
+		log.Printf("[Config] 使用系统设置中的定时巡检表达式: %s（覆盖 config.yaml）", v)
+		config.CronSchedule = v
+	}
+
 	// 启动全局定时调度器（从配置文件和数据库加载定时任务，含数据源同步任务）
 	startGlobalScheduler(config, collector)
+
+	// 启动外部告警源（n9e/华为云）规则周期同步
+	startExternalSyncScheduler()
 
 	// 启动告警子系统（evaluator + dispatcher + notifier）
 	if a, err := startAlerting(); err != nil {
@@ -307,6 +316,8 @@ func setupRoutes(collector *metrics.Collector, config *config.Config) *AdminAPI 
 	// 注册 AI Agent 路由
 	aiAgent := piagent.NewAgentHandler(config, collector, database.DB, config.Auth.JWTSecret)
 	aiAgent.RegisterRoutes(http.DefaultServeMux, adminAPI.authMiddleware)
+	// 设置全局句柄，供告警通知器、定时巡检等后台任务调用无头 AI 分析
+	piagent.DefaultAgentHandler = aiAgent
 
 	return adminAPI
 
@@ -361,7 +372,7 @@ func startGlobalScheduler(config *config.Config, collector *metrics.Collector) {
 	}
 
 	globalScheduler.Start()
-	log.Printf("[Cron] 定时调度器已启动")
+	log.Printf("[Cron] 定时调度器已启动（时区: %s，cron 表达式按该时区触发）", time.Now().Location().String())
 }
 
 func resolveConfigScheduleDatasourceID() *uint {
@@ -581,6 +592,65 @@ func sendJobNotifications(job database.CronJob, reportFilePath string, reportDat
 	alertSummary := notify.CalculateAlertSummary(*reportData)
 	for _, ch := range channels {
 		sendSingleNotification(ch, reportFilePath, reportData.Datasource, alertSummary, reportData)
+	}
+}
+
+// runInspectionAIAnalysis 巡检完成后执行 AI 健康分析，并将分析结果推送到任务配置的飞书通道。
+// 仅当 job.AiAnalysisEnabled 为 true 时执行；分析结果同时持久化到 AiAnalysisRecord。
+func runInspectionAIAnalysis(job database.CronJob, reportData *report.ReportData, reportFilePath string) {
+	if !job.AiAnalysisEnabled {
+		return
+	}
+	if piagent.DefaultAgentHandler == nil || !piagent.DefaultAgentHandler.AIEnabled() {
+		log.Printf("[PiAgent] AI 未启用或未配置模型，跳过巡检 AI 分析（job=%d）", job.ID)
+		return
+	}
+	if reportData == nil {
+		log.Printf("[PiAgent] 巡检数据为空，跳过 AI 分析（job=%d）", job.ID)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
+	refID := fmt.Sprintf("inspect_%d_%d", job.ID, time.Now().Unix())
+	res, err := piagent.DefaultAgentHandler.AnalyzeInspectionWithPrompt(ctx, reportData, reportURL, job.AiAnalysisPrompt, refID)
+	if err != nil {
+		log.Printf("[PiAgent] 巡检 AI 分析失败: %v", err)
+		return
+	}
+
+	// 推送分析结果到任务配置的飞书通道
+	pushed := 0
+	if job.NotifyChannels != "" {
+		var channelIDs []uint
+		if json.Unmarshal([]byte(job.NotifyChannels), &channelIDs) == nil && len(channelIDs) > 0 {
+			var channels []database.NotificationChannel
+			database.DB.Where("id IN ? AND enabled = ?", channelIDs, true).Find(&channels)
+			for _, ch := range channels {
+				if ch.ChannelType != "feishu" {
+					continue
+				}
+				var fcfg notify.FeishuConfig
+				if json.Unmarshal([]byte(ch.ConfigJSON), &fcfg) != nil || !fcfg.Enabled {
+					continue
+				}
+				dsName := ""
+				if reportData != nil {
+					dsName = reportData.Datasource
+				}
+				if err := notify.SendFeishuInspectionAnalysisCard(ctx, fcfg, job.Name, dsName, reportURL, res.Text); err != nil {
+					log.Printf("[PiAgent] 推送 AI 巡检分析到飞书失败 (channel=%d): %v", ch.ID, err)
+				} else {
+					pushed++
+					log.Printf("[PiAgent] 已推送 AI 巡检分析到飞书 (job=%d channel=%d)", job.ID, ch.ID)
+				}
+			}
+		}
+	}
+	if pushed == 0 {
+		log.Printf("[PiAgent] 巡检 AI 分析完成（job=%d），未推送到飞书（可能未配置飞书通道或推送失败），结果已落库 ref=%s", job.ID, refID)
 	}
 }
 
@@ -1257,6 +1327,7 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 		saveReportRecord(data, reportFilePath)
 		sendNotifications(cfg, reportFilePath, data)
 		sendJobNotifications(job, reportFilePath, data)
+		runInspectionAIAnalysis(job, data, reportFilePath)
 		reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
 		database.DB.Model(&database.InspectRecord{}).Where("task_id = ?", taskID).Updates(map[string]interface{}{
 			"status": "completed", "message": "巡检完成", "report_url": reportURL, "completed_at": time.Now(),
@@ -1318,6 +1389,7 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 	saveReportRecord(data, reportFilePath)
 	sendNotifications(cfg, reportFilePath, data)
 	sendJobNotifications(job, reportFilePath, data)
+	runInspectionAIAnalysis(job, data, reportFilePath)
 	reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
 	database.DB.Model(&database.InspectRecord{}).Where("task_id = ?", taskID).Updates(map[string]interface{}{
 		"status": "completed", "message": "巡检完成", "report_url": reportURL, "completed_at": time.Now(),

@@ -31,6 +31,11 @@ export interface MetricConfig {
   threshold_status?: string
   unit?: string
   labels_json?: string
+  // 动态基线异常检测（z-score / 3σ）
+  baseline_enabled?: boolean
+  baseline_window?: string
+  baseline_zscore?: number
+  baseline_min_samples?: number
   sort_order?: number
   created_at?: string
   updated_at?: string
@@ -64,6 +69,9 @@ export interface CronJob {
   all_datasources?: boolean
   enabled?: boolean
   notify_channels?: string
+  // AI 巡检分析：巡检完成后 AI 分析结果推送到飞书
+  ai_analysis_enabled?: boolean
+  ai_analysis_prompt?: string
   last_run_at?: string | null
   last_status?: string
   created_at?: string

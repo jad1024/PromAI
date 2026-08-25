@@ -623,3 +623,97 @@ body {
   border-color: var(--cyan) !important;
   color: var(--text-inverse) !important;
 }
+
+/* ===== 告警相关组件主题适配（抽屉 / 下拉 / 消息框 / 气泡） ===== */
+.el-drawer {
+  --el-drawer-bg-color: var(--bg-card) !important;
+  border-left: 1px solid var(--border) !important;
+}
+
+.el-drawer__header {
+  color: var(--text-primary) !important;
+  font-weight: 700 !important;
+  border-bottom: 1px solid var(--border) !important;
+  margin-bottom: 0 !important;
+  padding: 16px 20px !important;
+}
+
+.el-drawer__body {
+  color: var(--text-secondary) !important;
+  font-size: 13px !important;
+  line-height: 1.7 !important;
+}
+
+.el-select-dropdown, .el-dropdown-menu, .el-popper.is-light, .el-picker-panel,
+.el-picker-panel__body, .el-date-picker, .el-time-panel {
+  --el-bg-color-overlay: var(--bg-card) !important;
+  --el-text-color-primary: var(--text-primary) !important;
+  --el-text-color-regular: var(--text-secondary) !important;
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.el-select-dropdown__item {
+  color: var(--text-secondary) !important;
+  border-radius: 6px !important;
+}
+
+.el-select-dropdown__item.is-hovering {
+  background: var(--cyan-dim) !important;
+  color: var(--text-primary) !important;
+}
+
+.el-select-dropdown__item.is-selected {
+  color: var(--cyan) !important;
+  font-weight: 600 !important;
+}
+
+.el-popper.is-light {
+  background: var(--bg-card) !important;
+  color: var(--text-secondary) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+.el-popper.is-light .el-popper__arrow::before {
+  background: var(--bg-card) !important;
+  border-color: var(--border) !important;
+}
+
+.el-message-box {
+  --el-messagebox-bg-color: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 14px !important;
+}
+
+.el-message-box__title {
+  color: var(--text-primary) !important;
+  font-weight: 700 !important;
+}
+
+.el-message-box__content {
+  color: var(--text-secondary) !important;
+}
+
+.el-message {
+  --el-message-bg-color: var(--bg-card) !important;
+  --el-message-border-color: var(--border) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+/* 数值 / 时间等定宽等宽字体，提升可读性 */
+.mono-num {
+  font-family: 'JetBrains Mono', 'SF Mono', Consolas, 'Courier New', monospace !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 告警详情描述里的代码块 */
+.el-drawer__body code, .el-drawer__body pre {
+  font-family: 'JetBrains Mono', 'SF Mono', Consolas, 'Courier New', monospace !important;
+  font-size: 12px !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px !important;
+  padding: 2px 6px !important;
+  color: var(--text-secondary) !important;
+}

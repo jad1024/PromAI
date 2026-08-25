@@ -71,4 +71,10 @@ type MetricConfig struct {
 	Labels          map[string]string `yaml:"labels"`
 	ThresholdType   string            `yaml:"threshold_type"`
 	ThresholdStatus string            `yaml:"threshold_status"`
+
+	// 动态基线异常检测（可选，优先于静态阈值）
+	BaselineEnabled   bool    `yaml:"baseline_enabled"`     // 是否启用动态基线
+	BaselineWindow    string  `yaml:"baseline_window"`      // 历史窗口，如 7d / 24h / 168h，默认 7d
+	BaselineZScore    float64 `yaml:"baseline_zscore"`      // z-score 阈值，默认 3（3σ）
+	BaselineMinSamples int    `yaml:"baseline_min_samples"` // 最少样本数，默认 10
 }

@@ -161,18 +161,18 @@ func (sm *stateManager) absorb(s evaluator.Sample) {
 			return
 		}
 		t = &trackedAlert{
-			fingerprint: fp,
-			rule:        s.Rule,
-			ds:          s.Datasource,
-			ruleID:      s.Rule.ID,
-			dsID:        s.Datasource.ID,
-			labels:      s.Labels,
-			value:       s.Value,
-			threshold:   s.Threshold,
-			severity:    s.Severity,
-			state:       "pending",
-			activeAt:    s.EvalAt,
-			lastEvalAt:  s.EvalAt,
+			fingerprint:   fp,
+			rule:          s.Rule,
+			ds:            s.Datasource,
+			ruleID:        s.Rule.ID,
+			dsID:          s.Datasource.ID,
+			labels:        s.Labels,
+			value:         s.Value,
+			threshold:     s.Threshold,
+			severity:      s.Severity,
+			state:         "pending",
+			activeAt:      s.EvalAt,
+			lastEvalAt:    s.EvalAt,
 			seenThisRound: true,
 			stillActive:   true,
 			dirty:         true,
@@ -376,6 +376,8 @@ func upsertInstance(tx *gorm.DB, t *trackedAlert) {
 		GroupKey:        t.groupKey,
 		SilencedByJSON:  alerting.EncodeUintSlice(t.silencedBy),
 		InhibitedByJSON: alerting.EncodeUintSlice(t.inhibitedBy),
+		UnreadCount:     1,
+		FiringCount:     1,
 	}
 	var existing database.AlertInstance
 	err := tx.Where("fingerprint = ?", t.fingerprint).First(&existing).Error
@@ -386,8 +388,17 @@ func upsertInstance(tx *gorm.DB, t *trackedAlert) {
 	if err != nil {
 		return
 	}
-	// 保留 ID/created_at/notified_count
+	// 保留 ID/created_at/notified_count，并累加触发/未读计数
 	row.ID = existing.ID
+	row.UnreadCount = existing.UnreadCount
+	row.FiringCount = existing.FiringCount
+	if existing.State != "firing" && t.state == "firing" {
+		row.FiringCount++
+		row.UnreadCount++
+	}
+	if t.state == "resolved" {
+		row.UnreadCount = 0 // 恢复后清零未读
+	}
 	row.NotifiedCount = existing.NotifiedCount
 	row.LastNotifiedAt = existing.LastNotifiedAt
 	row.CreatedAt = existing.CreatedAt

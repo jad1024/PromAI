@@ -152,14 +152,18 @@ func buildMetricTypesFromConfigs(selectedConfigs []database.MetricConfig) []conf
 				_ = json.Unmarshal([]byte(item.LabelsJSON), &labels)
 			}
 			mtCfg.Metrics = append(mtCfg.Metrics, config.MetricConfig{
-				Name:            item.Name,
-				Description:     item.Description,
-				Query:           item.Query,
-				Threshold:       item.Threshold,
-				Unit:            item.Unit,
-				Labels:          labels,
-				ThresholdType:   item.ThresholdType,
-				ThresholdStatus: item.ThresholdStatus,
+				Name:               item.Name,
+				Description:        item.Description,
+				Query:              item.Query,
+				Threshold:          item.Threshold,
+				Unit:               item.Unit,
+				Labels:             labels,
+				ThresholdType:      item.ThresholdType,
+				ThresholdStatus:    item.ThresholdStatus,
+				BaselineEnabled:    item.BaselineEnabled,
+				BaselineWindow:     item.BaselineWindow,
+				BaselineZScore:     item.BaselineZScore,
+				BaselineMinSamples: item.BaselineMinSamples,
 			})
 		}
 		result = append(result, mtCfg)
@@ -174,14 +178,18 @@ func buildMetricTypesFromConfigs(selectedConfigs []database.MetricConfig) []conf
 				_ = json.Unmarshal([]byte(item.LabelsJSON), &labels)
 			}
 			mtCfg.Metrics = append(mtCfg.Metrics, config.MetricConfig{
-				Name:            item.Name,
-				Description:     item.Description,
-				Query:           item.Query,
-				Threshold:       item.Threshold,
-				Unit:            item.Unit,
-				Labels:          labels,
-				ThresholdType:   item.ThresholdType,
-				ThresholdStatus: item.ThresholdStatus,
+				Name:               item.Name,
+				Description:        item.Description,
+				Query:              item.Query,
+				Threshold:          item.Threshold,
+				Unit:               item.Unit,
+				Labels:             labels,
+				ThresholdType:      item.ThresholdType,
+				ThresholdStatus:    item.ThresholdStatus,
+				BaselineEnabled:    item.BaselineEnabled,
+				BaselineWindow:     item.BaselineWindow,
+				BaselineZScore:     item.BaselineZScore,
+				BaselineMinSamples: item.BaselineMinSamples,
 			})
 		}
 		result = append(result, mtCfg)

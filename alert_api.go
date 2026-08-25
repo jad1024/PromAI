@@ -35,6 +35,12 @@ func (a *AdminAPI) handleAlertRules(w http.ResponseWriter, r *http.Request) {
 		if v := r.URL.Query().Get("enabled"); v != "" {
 			filter["enabled"] = v == "true"
 		}
+		if v := strings.TrimSpace(r.URL.Query().Get("origin")); v != "" {
+			filter["origin"] = v
+		}
+		if v := strings.TrimSpace(r.URL.Query().Get("source_type")); v != "" {
+			filter["source_type"] = v
+		}
 		rows, total, err := alertstore.ListRules(database.DB, filter, page, pageSize)
 		if err != nil {
 			writeError(w, 500, err.Error())

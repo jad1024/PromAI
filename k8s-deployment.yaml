@@ -22,6 +22,8 @@ spec:
         - containerPort: 8091
           name: http
         env:
+        - name: TZ
+          value: "Asia/Shanghai"
         - name: PROMETHEUS_URL
           value: "http://prometheus.kubehan.cn"
         - name: PROMETHEUS_USERNAME

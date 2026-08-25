@@ -6,11 +6,14 @@ import (
 	"html/template"
 	"log"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 
+	"PromAI/pkg/anomaly"
 	"PromAI/pkg/config"
 	"PromAI/pkg/prometheus"
 	"PromAI/pkg/report"
@@ -83,6 +86,13 @@ func (c *Collector) CollectMetricsWithContext(ctx context.Context) (*report.Repo
 
 		for _, metric := range metricType.Metrics {
 			log.Printf("[DEBUG] 查询指标 %s, 查询语句: %s, 数据源: %s", metric.Name, metric.Query, c.prometheusURL)
+
+			// 动态基线：先拉取历史窗口数据（仅当启用基线检测）
+			var baselineStreams model.Matrix
+			if metric.BaselineEnabled {
+				baselineStreams = c.fetchBaselineSeries(ctx, metric.Query, metric.BaselineWindow)
+			}
+
 			result, _, err := c.Client.Query(ctx, metric.Query, time.Now())
 			if err != nil {
 				log.Printf("警告: 查询指标 %s 失败: %v", metric.Name, err)
@@ -125,6 +135,7 @@ func (c *Collector) CollectMetricsWithContext(ctx context.Context) (*report.Repo
 						continue
 					}
 
+					status := getStatus(value, metric.Threshold, metric.ThresholdType, metric.ThresholdStatus)
 					metricData := report.MetricData{
 						Name:          metric.Name,
 						Description:   metric.Description,
@@ -132,10 +143,32 @@ func (c *Collector) CollectMetricsWithContext(ctx context.Context) (*report.Repo
 						Threshold:     metric.Threshold,
 						ThresholdType: metric.ThresholdType,
 						Unit:          metric.Unit,
-						Status:        getStatus(value, metric.Threshold, metric.ThresholdType, metric.ThresholdStatus),
-						StatusText:    report.GetStatusText(getStatus(value, metric.Threshold, metric.ThresholdType, metric.ThresholdStatus)),
+						Status:        status,
+						StatusText:    report.GetStatusText(status),
 						Timestamp:     time.Now(),
 						Labels:        labels,
+					}
+
+					// 动态基线异常检测：基线命中异常时覆盖状态（静态阈值仍作为兜底）
+					if metric.BaselineEnabled && len(baselineStreams) > 0 {
+						if histValues, ok := matchBaselineSeries(baselineStreams, sample.Metric); ok {
+							bs := anomaly.Analyze(value, histValues, metric.BaselineZScore, metric.BaselineMinSamples)
+							metricData.BaselineEnabled = true
+							metricData.BaselineMean = bs.Mean
+							metricData.BaselineStdDev = bs.StdDev
+							metricData.BaselineMin = bs.Min
+							metricData.BaselineMax = bs.Max
+							metricData.BaselineCount = bs.Count
+							metricData.BaselineZScore = bs.ZScore
+							if bs.Level != "" {
+								metricData.Status = bs.Level
+								metricData.StatusText = report.GetStatusText(bs.Level)
+								log.Printf("指标 [%s] 动态基线异常: value=%.2f 基线均值=%.2f 标准差=%.2f z-score=%.2f 等级=%s",
+									metric.Name, value, bs.Mean, bs.StdDev, bs.ZScore, bs.Level)
+							}
+						} else {
+							log.Printf("指标 [%s] 未在历史序列中找到匹配 (labels=%v)，跳过基线判断", metric.Name, sample.Metric)
+						}
 					}
 
 					if err := validateMetricData(metricData, metric.Labels); err != nil {
@@ -150,6 +183,85 @@ func (c *Collector) CollectMetricsWithContext(ctx context.Context) (*report.Repo
 		}
 	}
 	return data, nil
+}
+
+// fetchBaselineSeries 拉取指标在历史窗口内的时序数据（matrix），用于动态基线计算。
+// 查询失败或结果类型不匹配时返回 nil（调用方会跳过基线判断）。
+func (c *Collector) fetchBaselineSeries(ctx context.Context, query, window string) model.Matrix {
+	win := parseBaselineWindow(window)
+	step := win / 96 // 约 96 个采样点
+	if step < time.Minute {
+		step = time.Minute
+	}
+	r := v1.Range{
+		Start: time.Now().Add(-win),
+		End:   time.Now(),
+		Step:  step,
+	}
+	qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, _, err := c.Client.QueryRange(qctx, query, r)
+	if err != nil {
+		log.Printf("警告: 指标 [%s] 拉取基线数据失败: %v", query, err)
+		return nil
+	}
+	if m, ok := result.(model.Matrix); ok {
+		return m
+	}
+	return nil
+}
+
+// parseBaselineWindow 解析历史窗口字符串，支持 "7d"、"168h"、"24h" 等格式，默认 7 天。
+func parseBaselineWindow(s string) time.Duration {
+	if s == "" {
+		return 7 * 24 * time.Hour
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		if d < time.Hour {
+			return time.Hour
+		}
+		return d
+	}
+	trimmed := strings.TrimSuffix(strings.TrimSpace(s), "d")
+	if n, err := strconv.Atoi(trimmed); err == nil && n > 0 {
+		return time.Duration(n) * 24 * time.Hour
+	}
+	return 7 * 24 * time.Hour
+}
+
+// matchBaselineSeries 从历史 matrix 中寻找与目标标签集匹配的序列，返回其样本值。
+// 匹配规则：目标（当前 sample）的所有标签（__name__ 除外）必须是序列标签的子集。
+func matchBaselineSeries(streams model.Matrix, target model.Metric) ([]float64, bool) {
+	for _, s := range streams {
+		if !labelsContain(s.Metric, target) {
+			continue
+		}
+		values := make([]float64, 0, len(s.Values))
+		for _, p := range s.Values {
+			v := float64(p.Value)
+			if !math.IsNaN(v) && !math.IsInf(v, 0) {
+				values = append(values, v)
+			}
+		}
+		if len(values) > 0 {
+			return values, true
+		}
+	}
+	return nil, false
+}
+
+// labelsContain 判断 streamLabels 是否包含 target 的所有标签（__name__ 除外）。
+func labelsContain(streamLabels, target model.Metric) bool {
+	for k, v := range target {
+		if k == model.MetricNameLabel {
+			continue
+		}
+		sv, ok := streamLabels[k]
+		if !ok || sv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // validateMetricData 验证指标数据的完整性

@@ -22,9 +22,13 @@ export interface AlertRule {
   id?: number
   name: string
   description?: string
-  source_type: 'metric' | 'custom'
+  source_type: 'metric' | 'custom' | 'external'
   metric_config_id?: number | null
   template_id?: number | null
+  // 规则创建渠道：manual=手动创建 / template=模板生成 / sync=外部平台同步
+  origin?: 'manual' | 'template' | 'sync'
+  origin_source_id?: number
+  origin_external_id?: string
   expr?: string
   threshold?: number
   threshold_type?: string
@@ -53,6 +57,14 @@ export interface AlertInstance {
   fingerprint: string
   rule_id: number
   datasource_id: number
+  // 展示用（服务端展开）
+  rule_name?: string
+  datasource_name?: string
+  external_source_id?: number
+  external_source_name?: string
+  // 未读红点计数 / 累计触发次数
+  unread_count?: number
+  firing_count?: number
   labels: Record<string, string> | null
   annotations: Record<string, string> | null
   state: AlertState
@@ -89,6 +101,25 @@ export interface AlertHistoryRow {
   notify_result: string
   occurred_at: string
   created_at: string
+}
+
+// 已恢复告警实例的聚合会话（历史页数据源，同一指纹合并为一条）
+export interface HistorySession {
+  fingerprint: string
+  rule_id: number
+  rule_name: string
+  datasource_id: number
+  datasource_name: string
+  severity: Severity
+  first_fired_at?: string | null
+  resolved_at?: string | null
+  firing_count: number
+  repeat_count: number
+  value: number
+  threshold: number
+  labels_json: string
+  annotations_json: string
+  duration_sec: number
 }
 
 export interface TimelineEntry {
@@ -204,6 +235,10 @@ export interface AlertStats {
   top_rules: Array<{ RuleID: number; Count: number }>
   top_datasources: Array<{ DatasourceID: number; Count: number }>
   trend_24h: Array<{ Hour: string; Count: number }>
+  trend_24h_by_source?: Array<{ Hour: string; Source: string; Count: number }>
+  unread_count: number
+  resolved_count: number
+  resolved_total: number
 }
 
 export interface EvaluatorStatus {
@@ -230,4 +265,57 @@ export interface TestRuleResult {
   success: boolean
   error?: string
   samples: TestRuleResultSample[]
+}
+
+// ===== 外部告警源（n9e / 华为云 CES / 通用 webhook） =====
+export type ExternalSourceType = 'n9e' | 'huaweicloud' | 'aliyun' | 'generic'
+
+export interface ExternalAlertSource {
+  id?: number
+  name: string
+  type: ExternalSourceType
+  enabled: boolean
+  url?: string
+  // 华为云 CES
+  region?: string
+  project_id?: string
+  access_key?: string
+  secret_key?: string // 列表/详情接口返回时脱敏为空
+  // n9e
+  username?: string
+  password?: string // 列表/详情接口返回时脱敏为空
+  n9e_token?: string // n9e v8+ 个人中心 X-User-Token（返回时脱敏为空），优先于账号密码
+  // webhook 接收鉴权（返回时脱敏为空）
+  token?: string
+  sync_interval?: string // 30m / 1h / 1d
+  last_sync_at?: string | null
+  sync_status?: string // success / failed / pending / ''
+  sync_error?: string
+  notify_enabled?: boolean
+  ai_analysis_enabled?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ExternalRule {
+  id: number
+  source_id: number
+  source_type: string
+  external_id: string
+  rule_name: string
+  severity: Severity | string
+  status: string // enabled / disabled
+  condition?: string
+  raw_json?: string
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ExternalSyncResult {
+  source: string
+  created: number
+  updated: number
+  total: number
+  status: string
 }

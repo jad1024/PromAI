@@ -16,11 +16,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"PromAI/pkg/alerting/notifier"
 	"PromAI/pkg/config"
 	"PromAI/pkg/database"
 	"PromAI/pkg/metrics"
 	"PromAI/pkg/notify"
-	"PromAI/pkg/alerting/notifier"
 	piagent "PromAI/pkg/pi-agent"
 	"PromAI/pkg/prometheus"
 	"PromAI/pkg/report"
@@ -378,13 +378,23 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/alert/routes/", logged(auth(a.handleAlertRouteByID)))
 	mux.HandleFunc("/api/promai/alert/instances", logged(auth(a.handleAlertInstances)))
 	mux.HandleFunc("/api/promai/alert/instances/trend", logged(auth(a.handleAlertInstancesTrend)))
+	mux.HandleFunc("/api/promai/alert/instances/batch", logged(auth(a.handleAlertInstanceBatch)))
 	mux.HandleFunc("/api/promai/alert/instances/", logged(auth(a.handleAlertInstanceByFP)))
 	mux.HandleFunc("/api/promai/alert/history/timeline", logged(auth(a.handleAlertHistoryTimeline)))
+	mux.HandleFunc("/api/promai/alert/history/rule-names", logged(auth(a.handleAlertHistoryRuleNames)))
+	mux.HandleFunc("/api/promai/alert/history/sessions", logged(auth(a.handleAlertHistorySessions)))
 	mux.HandleFunc("/api/promai/alert/history", logged(auth(a.handleAlertHistory)))
 	mux.HandleFunc("/api/promai/alert/groups", logged(auth(a.handleAlertGroups)))
 	mux.HandleFunc("/api/promai/alert/notify-logs", logged(auth(a.handleAlertNotifyLogs)))
 	mux.HandleFunc("/api/promai/alert/stats", logged(auth(a.handleAlertStats)))
 	mux.HandleFunc("/api/promai/alert/evaluator/status", logged(auth(a.handleAlertEvaluatorStatus)))
+
+	// ===== 外部告警接入（n9e / 华为云 CES / 通用 webhook） =============================
+	// 注意：webhook 接收端点不能要求 JWT（外部平台推送），token 校验在 handler 内完成
+	mux.HandleFunc("/api/promai/webhook/alerts", logged(a.handleExternalWebhook))
+	mux.HandleFunc("/api/promai/webhook/alerts/", logged(a.handleExternalWebhook))
+	mux.HandleFunc("/api/promai/alert-sources", logged(auth(a.handleAlertSources)))
+	mux.HandleFunc("/api/promai/alert-sources/", logged(auth(a.handleAlertSourceByID)))
 
 	log.Printf("[AdminAPI] 管理接口已注册")
 }
@@ -1070,6 +1080,11 @@ func (a *AdminAPI) handleCronJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AdminAPI) handleCronJobByID(w http.ResponseWriter, r *http.Request) {
+	// 子路径 /ai-analyze：手动触发一次 AI 巡检分析（巡检 -> AI 分析 -> 推送飞书）
+	if strings.HasSuffix(r.URL.Path, "/ai-analyze") {
+		a.handleCronJobAIAnalyze(w, r)
+		return
+	}
 	id, err := getLastPathID(r.URL.Path)
 	if err != nil {
 		writeError(w, 400, err.Error())
@@ -1106,6 +1121,50 @@ func (a *AdminAPI) handleCronJobByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, 405, "不支持的请求方法")
 	}
+}
+
+// handleCronJobAIAnalyze 手动触发一次定时任务的 AI 巡检分析：
+// 立即对该任务的数据源执行一次巡检，随后调用 AI 生成健康分析并推送到飞书通道。
+// 无论任务是否开启 ai_analysis_enabled，手动触发都会强制执行分析（便于测试链路）。
+// POST /api/promai/cronjobs/:id/ai-analyze
+func (a *AdminAPI) handleCronJobAIAnalyze(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "不支持的请求方法")
+		return
+	}
+	trimmed := strings.TrimSuffix(r.URL.Path, "/ai-analyze")
+	id, err := getLastPathID(trimmed)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	var job database.CronJob
+	if database.DB.First(&job, id).Error != nil {
+		writeError(w, 404, "定时任务不存在")
+		return
+	}
+	// 手动触发强制开启 AI 分析
+	forceJob := job
+	forceJob.AiAnalysisEnabled = true
+
+	dsIDs := resolveJobDatasourceIDs(forceJob)
+	if len(dsIDs) > 0 {
+		okCount := 0
+		for _, dsID := range dsIDs {
+			if doSingleInspection(a.config, a.collector, forceJob, &dsID) {
+				okCount++
+			}
+		}
+		writeJSON(w, map[string]interface{}{
+			"success": okCount > 0, "job_id": job.ID, "job_name": job.Name,
+			"datasources_ok": okCount, "datasources_total": len(dsIDs),
+		})
+		return
+	}
+	ok := doSingleInspection(a.config, a.collector, forceJob, nil)
+	writeJSON(w, map[string]interface{}{
+		"success": ok, "job_id": job.ID, "job_name": job.Name,
+	})
 }
 
 func (a *AdminAPI) handleReports(w http.ResponseWriter, r *http.Request) {

@@ -9,6 +9,11 @@
       <div class="section-header">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><List /></el-icon> 规则列表</h3>
         <div class="action-bar">
+          <el-select v-model="filterOrigin" placeholder="全部来源" clearable style="width: 130px;" @change="fetchData">
+            <el-option label="手动创建" value="manual" />
+            <el-option label="模板生成" value="template" />
+            <el-option label="同步获取" value="sync" />
+          </el-select>
           <el-select v-model="filterSeverity" placeholder="全部级别" clearable style="width: 120px;" @change="fetchData">
             <el-option label="严重 critical" value="critical" />
             <el-option label="警告 warning" value="warning" />
@@ -41,9 +46,12 @@
             <div style="font-size:11px;color:var(--text-tertiary);">{{ row.description }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="80">
+        <el-table-column label="来源" width="150">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.source_type === 'metric' ? '指标' : '自定义' }}</el-tag>
+            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+              <el-tag size="small" :style="sourceTypeStyle(row.source_type)">{{ sourceTypeLabel(row.source_type) }}</el-tag>
+              <el-tag size="small" :style="originStyle(row.origin)">{{ originLabel(row.origin) }}</el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="巡检模版" width="120">
@@ -555,6 +563,7 @@ const allTemplates = ref<any[]>([])
 const templateMetrics = ref<(MetricConfig & { type_name: string })[]>([])
 const filterSeverity = ref('')
 const filterEnabled = ref<boolean | ''>('')
+const filterOrigin = ref('')
 const dialog = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
@@ -653,6 +662,30 @@ function severityStyle(s: string) {
     info: { background: '#3b82f6', color: '#fff', border: 'none' },
   }
   return map[s] || map.warning
+}
+// 规则类型：metric=复用指标 / custom=自定义 PromQL / external=外部平台镜像
+function sourceTypeLabel(s: string | undefined) {
+  return { metric: '指标', custom: '自定义', external: '外部' }[s || ''] || s || '指标'
+}
+function sourceTypeStyle(s: string | undefined) {
+  const m: Record<string, any> = {
+    metric: { background: 'rgba(99,102,241,0.12)', color: '#818cf8', border: 'none' },
+    custom: { background: 'rgba(59,130,246,0.12)', color: '#3b82f6', border: 'none' },
+    external: { background: 'rgba(16,185,129,0.12)', color: '#10b981', border: 'none' },
+  }
+  return m[s || ''] || m.metric
+}
+// 规则创建渠道：manual=手动 / template=模板生成 / sync=外部同步
+function originLabel(o: string | undefined) {
+  return { manual: '手动', template: '模板', sync: '同步' }[o || ''] || o || ''
+}
+function originStyle(o: string | undefined) {
+  const m: Record<string, any> = {
+    manual: { background: 'rgba(148,163,184,0.15)', color: '#94a3b8', border: 'none' },
+    template: { background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: 'none' },
+    sync: { background: 'rgba(16,185,129,0.15)', color: '#10b981', border: 'none' },
+  }
+  return (o && m[o]) || { background: 'rgba(148,163,184,0.15)', color: '#94a3b8', border: 'none' }
 }
 function formatLabels(labels: Record<string, string>) {
   if (!labels) return ''
@@ -857,6 +890,7 @@ async function fetchData() {
     const params: any = { page: page.value, page_size: pageSize.value }
     if (filterSeverity.value) params.severity = filterSeverity.value
     if (filterEnabled.value !== '') params.enabled = filterEnabled.value ? 'true' : 'false'
+    if (filterOrigin.value) params.origin = filterOrigin.value
     const res = await getAlertRules(params)
     rules.value = res.data.items
     total.value = res.data.total

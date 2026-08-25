@@ -110,6 +110,8 @@ export const getCronJob = (id: number) => api.get<CronJob>(`/cronjobs/${id}`)
 export const createCronJob = (j: CronJob) => api.post<CronJob>('/cronjobs', j)
 export const updateCronJob = (id: number, j: CronJob) => api.put<CronJob>(`/cronjobs/${id}`, j)
 export const deleteCronJob = (id: number) => api.delete(`/cronjobs/${id}`)
+/** 手动触发一次 AI 巡检分析：立即巡检 -> AI 分析 -> 推送飞书 */
+export const triggerCronJobAIAnalyze = (id: number) => api.post(`/cronjobs/${id}/ai-analyze`)
 
 // Reports
 export const getReports = (params?: { page?: number; page_size?: number; keyword?: string; status?: string }) =>
@@ -191,11 +193,11 @@ export const testAiModel = (model: {
 
 // ===== Alerting =================================================================
 import type {
-  AlertRule, AlertInstance, AlertHistoryRow, AlertSilence, AlertInhibit, AlertRoute,
+  AlertRule, AlertInstance, AlertHistoryRow, HistorySession, AlertSilence, AlertInhibit, AlertRoute,
   AlertGroup, AlertNotifyLog, AlertStats, EvaluatorStatus, TestRuleResult, TimelineGroup,
 } from '../types/alerting'
 
-export const getAlertRules = (params?: { keyword?: string; severity?: string; enabled?: string; page?: number; page_size?: number }) =>
+export const getAlertRules = (params?: { keyword?: string; severity?: string; enabled?: string; origin?: string; source_type?: string; page?: number; page_size?: number }) =>
   api.get<{ items: AlertRule[]; total: number }>('/alert/rules', { params })
 export const getAlertRule = (id: number) => api.get<AlertRule>(`/alert/rules/${id}`)
 export const createAlertRule = (r: AlertRule) => api.post<AlertRule>('/alert/rules', r)
@@ -215,22 +217,40 @@ export const generateAlertRulesFromTemplate = (templateId: number) =>
 export const getAlertInstances = (params?: {
   page?: number; page_size?: number; state?: string; severity?: string;
   datasource_id?: number; rule_id?: number; fingerprint?: string;
-  keyword?: string; include_masked?: string
+  keyword?: string; include_masked?: string; from?: string; to?: string
 }) => api.get<{ items: AlertInstance[]; total: number; page: number; page_size: number }>('/alert/instances', { params })
 export const getAlertInstance = (fingerprint: string) =>
   api.get<{ instance: AlertInstance; history: AlertHistoryRow[]; notify_logs?: AlertNotifyLog[] }>(`/alert/instances/${fingerprint}`)
-export const getAlertInstancesTrend = (fingerprints: string[], minutes = 60) =>
-  api.post<Record<string, [number, number][]>>('/alert/instances/trend', { fingerprints, minutes })
+export const getAlertInstancesTrend = (fingerprints: string[], minutes = 60, includeRepeats = false) =>
+  api.post<Record<string, [number, number][]>>('/alert/instances/trend', { fingerprints, minutes, include_repeats: includeRepeats })
 export const clearAlertInstances = () =>
   api.delete('/alert/instances')
+// 标记单条告警已读（未读红点清零）
+export const markAlertInstanceRead = (fingerprint: string) =>
+  api.post<{ success: boolean; fingerprint: string }>(`/alert/instances/${fingerprint}/read`)
+// 批量操作：delete=删除 / resolve=结束 / silence=静默 / read=标记已读
+export const batchAlertInstances = (action: 'delete' | 'resolve' | 'silence' | 'read', fingerprints: string[], opts?: { silence_minutes?: number; comment?: string }) =>
+  api.post<{ action: string; done: number; failed: number; errors?: string[] }>('/alert/instances/batch', {
+    action, fingerprints, ...(opts || {}),
+  })
 
 export const getAlertHistory = (params?: {
-  page?: number; page_size?: number; rule_id?: number; datasource_id?: number;
+  page?: number; page_size?: number; rule_id?: number; rule_name?: string; datasource_id?: number;
   event_type?: string; severity?: string; keyword?: string; from?: string; to?: string
 }) => api.get<{ items: AlertHistoryRow[]; total: number; page: number; page_size: number }>('/alert/history', { params })
 
+// 已恢复告警实例聚合列表（历史页）：同一指纹合并为一条，只含已恢复的实例
+export const getAlertHistorySessions = (params?: {
+  page?: number; page_size?: number; rule_id?: number; rule_name?: string; datasource_id?: number;
+  severity?: string; keyword?: string; from?: string; to?: string
+}) => api.get<{ items: HistorySession[]; total: number; page: number; page_size: number }>('/alert/history/sessions', { params })
+
+// 历史告警中出现的去重规则名（用于筛选下拉）
+export const getAlertHistoryRuleNames = () =>
+  api.get<{ items: string[] }>('/alert/history/rule-names')
+
 export const getAlertHistoryTimeline = (params?: {
-  rule_id?: number; datasource_id?: number; keyword?: string; from?: string; to?: string
+  rule_id?: number; datasource_id?: number; rule_name?: string; keyword?: string; from?: string; to?: string
 }) => api.get<{ groups: TimelineGroup[] }>('/alert/history/timeline', { params })
 
 export const getAlertSilences = (params?: { include_expired?: boolean; page?: number; page_size?: number }) =>
@@ -260,6 +280,21 @@ export const getAlertNotifyLogs = (params?: {
 
 export const getAlertStats = () => api.get<AlertStats>('/alert/stats')
 export const getAlertEvaluatorStatus = () => api.get<EvaluatorStatus>('/alert/evaluator/status')
+
+// ===== 外部告警源（n9e / 华为云 / 通用 webhook） =====
+import type { ExternalAlertSource, ExternalRule, ExternalSyncResult } from '../types/alerting'
+
+export const getAlertSources = () => api.get<ExternalAlertSource[]>('/alert-sources')
+export const createAlertSource = (s: ExternalAlertSource) => api.post<ExternalAlertSource>('/alert-sources', s)
+export const updateAlertSource = (id: number, s: Partial<ExternalAlertSource>) => api.put<ExternalAlertSource>(`/alert-sources/${id}`, s)
+export const deleteAlertSource = (id: number) => api.delete(`/alert-sources/${id}`)
+export const syncAlertSource = (id: number) => api.post<ExternalSyncResult>(`/alert-sources/${id}/sync`)
+export const getAlertSourceRules = (id: number, params?: { page?: number; page_size?: number }) =>
+  api.get<{ total: number; page: number; page_size: number; rules: ExternalRule[] }>(`/alert-sources/${id}/rules`, { params })
+
+// 手动结束一条活跃告警（含外部告警）
+export const resolveAlertInstance = (fingerprint: string) =>
+  api.post<{ message: string; fingerprint: string }>(`/alert/instances/${fingerprint}/resolve`)
 
 // AI Skills (SKILL.md 规范 — 文件系统存储)
 export const getAISkills = () =>

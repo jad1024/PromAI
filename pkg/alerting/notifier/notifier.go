@@ -33,6 +33,7 @@ import (
 	"PromAI/pkg/alerting/dispatcher"
 	"PromAI/pkg/database"
 	"PromAI/pkg/notify"
+	piagent "PromAI/pkg/pi-agent"
 	"PromAI/pkg/utils"
 
 	"github.com/jordan-wright/email"
@@ -157,6 +158,13 @@ func (n *Notifier) SendGroup(ctx context.Context, group *database.AlertGroup, in
 	}
 	log.Printf("[Notify] · group=%s rule=%d 启用通道: %v", gkShort, ruleID, chanNames)
 
+	// AI 根因分析：发送前异步生成一次分析结论，追加到各通道消息末尾。
+	// 分析失败不阻塞通知（仅记日志，通知照发）。
+	aiSection := n.runAlertAnalysis(ctx, group, instances, ruleID)
+	if aiSection != "" {
+		log.Printf("[Notify] · group=%s rule=%d AI 根因分析已生成 (%dB)", gkShort, ruleID, len(aiSection))
+	}
+
 	// 解析限流窗口：throttle_window > repeat_interval > 默认
 	throttleWindow := resolveThrottleWindow(&route, &rule, n.throttleWindow)
 	log.Printf("[Notify] · group=%s rule=%d 限流窗口=%v", gkShort, ruleID, throttleWindow)
@@ -167,6 +175,13 @@ func (n *Notifier) SendGroup(ctx context.Context, group *database.AlertGroup, in
 		// 每个通道按自身的 template 配置独立渲染
 		tpl := parseChannelTemplate(&ch)
 		rendered := n.renderWithTemplate(group, instances, tpl, false)
+		if aiSection != "" {
+			aiPlain := strings.ReplaceAll(aiSection, "**", "")
+			aiHTML := "<hr><h3>🤖 AI 根因分析</h3><div style=\"white-space:pre-wrap;font-size:13px;color:#555\">" + template.HTMLEscapeString(aiSection) + "</div>"
+			rendered.markdown = rendered.markdown + "\n\n---\n\n" + aiSection
+			rendered.plain = rendered.plain + "\n\n---\n\n" + aiPlain
+			rendered.html = rendered.html + aiHTML
+		}
 		log.Printf("[Notify] · group=%s rule=%d channel=%s/#%d 渲染(模板style=%s): md=%dB",
 			gkShort, ruleID, ch.ChannelType, ch.ID, tpl.resolve().Style, len(rendered.markdown))
 
@@ -1350,4 +1365,65 @@ func (n *Notifier) clientWithProxy(proxyURL string) (*http.Client, error) {
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}, nil
+}
+
+// =============================================================================
+// AI 告警根因分析（可选能力）
+// =============================================================================
+
+// runAlertAnalysis 在发送前为当前告警分组生成 AI 根因分析文本。
+// 开关判定：全局 app_settings.ai_alert_analysis_enabled（默认 true，需 AI 已配置）
+//           × 规则级 AlertRule.AiAnalysisEnabled（默认 true）。
+// 任一条件不满足、或分析失败时返回空串（通知内容不含 AI 部分，不阻塞发送）。
+func (n *Notifier) runAlertAnalysis(ctx context.Context, group *database.AlertGroup, instances []database.AlertInstance, ruleID uint) string {
+	h := piagent.DefaultAgentHandler
+	if h == nil || !h.AIEnabled() {
+		return ""
+	}
+	if !aiAlertAnalysisGloballyEnabled() {
+		return ""
+	}
+	var rule database.AlertRule
+	if err := database.DB.First(&rule, ruleID).Error; err != nil {
+		return ""
+	}
+	if !rule.AiAnalysisEnabled {
+		return ""
+	}
+	if group == nil || len(instances) == 0 {
+		return ""
+	}
+
+	log.Printf("[Notify] · group=%s rule=%d 开始 AI 根因分析...", group.GroupKey, ruleID)
+	started := time.Now()
+	res, err := h.AnalyzeAlertAndRecord(ctx, &rule, instances, group.GroupKey)
+	if err != nil || res == nil || strings.TrimSpace(res.Text) == "" {
+		log.Printf("[Notify] ✗ group=%s rule=%d AI 根因分析失败或空结果: %v", group.GroupKey, ruleID, err)
+		return ""
+	}
+	log.Printf("[Notify] ✓ group=%s rule=%d AI 根因分析完成 耗时=%v 文本=%dB",
+		group.GroupKey, ruleID, time.Since(started).Round(time.Millisecond), len(res.Text))
+	return "🤖 **AI 根因分析**\n" + truncateText(res.Text, 1800)
+}
+
+// aiAlertAnalysisGloballyEnabled 读取全局开关 app_settings.ai_alert_analysis_enabled。
+// 未配置该设置时默认开启（前提是 AI 已配置）。
+func aiAlertAnalysisGloballyEnabled() bool {
+	var setting database.AppSetting
+	if err := database.DB.Where("key = ?", "ai_alert_analysis_enabled").First(&setting).Error; err != nil {
+		return true
+	}
+	return setting.Value == "true" || setting.Value == "1"
+}
+
+// truncateText 按 rune 截断文本，超出部分追加省略标记。
+func truncateText(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return s
+	}
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "\n…（已截断）"
 }

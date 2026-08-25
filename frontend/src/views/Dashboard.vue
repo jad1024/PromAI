@@ -105,6 +105,10 @@
               <span>实时告警</span>
               <span :style="{ color: firingCount > 0 ? 'var(--red)' : 'var(--emerald)', fontWeight: 700 }">{{ firingCount }}</span>
             </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>已恢复</span>
+              <span style="color: var(--emerald); font-weight: 700;">{{ resolvedCount }}</span>
+            </div>
           </div>
         </div>
         <div class="section-card" style="margin-top: 20px;">
@@ -152,6 +156,7 @@ const loading = ref(false)
 const recentReports = ref<ReportRecord[]>([])
 const statValues = ref([0, 0, 0, 0])
 const firingCount = ref(0)
+const resolvedCount = ref(0)
 const evalStatus = ref<EvaluatorStatus | null>(null)
 const stats = computed(() => {
   // read currentTheme to re-evaluate on theme change
@@ -162,6 +167,7 @@ const stats = computed(() => {
     { label: '通知渠道', value: statValues.value[2], icon: 'Bell', color: getCssVar('--amber'), glow: getCssVar('--amber'), bg: getCssVar('--amber-dim') },
     { label: '历史报告', value: statValues.value[3], icon: 'Document', color: getCssVar('--purple'), glow: getCssVar('--purple'), bg: getCssVar('--purple-dim') },
     { label: '告警中', value: firingCount.value, icon: 'Warning', color: getCssVar('--red'), glow: getCssVar('--red'), bg: getCssVar('--red-dim') },
+    { label: '已恢复', value: resolvedCount.value, icon: 'CircleCheck', color: getCssVar('--emerald'), glow: getCssVar('--emerald'), bg: getCssVar('--emerald-dim') },
   ]
 })
 
@@ -179,6 +185,7 @@ onMounted(async () => {
     recentReports.value = reps.data.items.slice(0, 5)
     const st = astat.data.by_state
     firingCount.value = st.find(x => x.State === 'firing')?.Count || 0
+    resolvedCount.value = astat.data.resolved_count || 0
     evalStatus.value = ev.data
   } catch { /* ignore */ } finally {
     loading.value = false

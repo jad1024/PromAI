@@ -47,9 +47,12 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
             <el-button size="small" text @click="openEdit(row)" style="color: var(--cyan);">编辑</el-button>
+            <el-button size="small" text :loading="aiAnalyzingId === row.id" :disabled="!!aiAnalyzingId" @click="handleAiAnalyze(row)" style="color: #a855f7;">
+              AI 分析
+            </el-button>
             <el-button size="small" text @click="handleDelete(row)" style="color: var(--red);">删除</el-button>
           </template>
         </el-table-column>
@@ -83,6 +86,13 @@
             <el-option v-for="nc in notifications" :key="nc.id" :label="nc.name" :value="nc.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="AI 巡检分析">
+          <el-switch v-model="form.ai_analysis_enabled" active-text="开启（巡检后 AI 分析并推送飞书）" inactive-text="关闭" />
+          <div style="color: var(--text-tertiary); font-size: 12px; line-height: 1.4;">定时触发时需开启此开关才会推送飞书 AI 分析；列表页手动「AI 分析」不受此开关限制</div>
+        </el-form-item>
+        <el-form-item v-if="form.ai_analysis_enabled" label="自定义提示词">
+          <el-input v-model="form.ai_analysis_prompt" type="textarea" :rows="3" placeholder="可选。留空使用内置模板（健康总览 / 异常分析 / 处理建议 / 风险提示）" />
+        </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -102,7 +112,7 @@ import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { getCronJobs, createCronJob, updateCronJob, deleteCronJob, getAllDataSources, getAllNotifications } from '../api'
+import { getCronJobs, createCronJob, updateCronJob, deleteCronJob, triggerCronJobAIAnalyze, getAllDataSources, getAllNotifications } from '../api'
 import type { CronJob, DataSource, NotificationChannel } from '../types'
 
 function getCssVar(name: string): string {
@@ -119,7 +129,8 @@ const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const notifChannelIds = ref<number[]>([])
 const selectedDSIds = ref<number[]>([])
-const form = ref<CronJob>({ name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true })
+const aiAnalyzingId = ref<number | null>(null)
+const form = ref<CronJob>({ name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false })
 const rules = {
   name: [{ required: true, message: '请输入任务名称', trigger: 'blur' }],
   schedule: [{ required: true, message: '请输入调度表达式', trigger: 'blur' }],
@@ -171,7 +182,7 @@ async function fetchData() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true }
+  form.value = { name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, ai_analysis_prompt: '' }
   notifChannelIds.value = []
   selectedDSIds.value = []
   dialogVisible.value = true
@@ -200,6 +211,26 @@ async function handleDelete(row: CronJob) {
     await ElMessageBox.confirm(`确定删除定时任务「${row.name}」？`, '确认删除', { type: 'warning', cancelButtonText: '取消', confirmButtonText: '删除' })
     await deleteCronJob(row.id!); ElMessage.success('删除成功'); await fetchData()
   } catch { /* ignore */ }
+}
+
+// 手动触发一次 AI 巡检分析（立即巡检 -> AI 分析 -> 推送飞书）
+async function handleAiAnalyze(row: CronJob) {
+  try {
+    await ElMessageBox.confirm(
+      `将立即对任务「${row.name}」执行一次巡检，并由 AI 生成健康分析推送到飞书。\n耗时约 1-3 分钟，是否继续？`,
+      '触发 AI 巡检分析', { type: 'info', cancelButtonText: '取消', confirmButtonText: '触发', confirmButtonClass: 'el-button--primary' }
+    )
+  } catch { return }
+  aiAnalyzingId.value = row.id!
+  try {
+    const res: any = await triggerCronJobAIAnalyze(row.id!)
+    if (res.data?.success) {
+      ElMessage.success('AI 巡检分析已触发，结果将推送到飞书')
+    } else {
+      ElMessage.warning(res.data?.message || '任务已执行，请查看巡检记录')
+    }
+    await fetchData()
+  } catch (e: any) { ElMessage.error(e.message || '触发失败') } finally { aiAnalyzingId.value = null }
 }
 
 async function toggleEnabled(row: CronJob) {

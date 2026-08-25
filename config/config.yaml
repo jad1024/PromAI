@@ -109,6 +109,25 @@ metric_types:
           # nodename: "主机名"
           instance: "实例地址"
 
+      # ===== 动态基线异常检测示例 =====
+      # 开启后不再只看静态阈值，而是对比该指标最近 7 天的历史分布（均值/标准差）：
+      #   - |z-score| >= baseline_zscore（默认3，即3σ）→ 判定为异常（warning）
+      #   - |z-score| >= baseline_zscore*2 → 升级为 critical
+      #   - 历史样本不足 baseline_min_samples 时自动回退静态阈值
+      # 适用于"缓慢爬升""工作日/节假日波动"等静态阈值难以覆盖的场景。
+      - name: "内存性能状态监控（动态基线）"
+        description: "内存使用率动态基线检测示例（与上方静态阈值并存，取更严重者）"
+        query: "avg_over_time((100 - ((node_memory_MemAvailable_bytes * 100)/node_memory_MemTotal_bytes))[1h:]) * on(instance) group_left(nodename) node_uname_info"
+        threshold: 95
+        threshold_type: "greater"
+        unit: "%"
+        baseline_enabled: true        # 启用动态基线
+        baseline_window: "7d"         # 历史窗口：7 天
+        baseline_zscore: 3            # z-score 阈值（3σ）
+        baseline_min_samples: 10      # 最少样本数
+        labels:
+          instance: "实例地址"
+
       - name: "存储设备状态监控"
         query: >-
           (

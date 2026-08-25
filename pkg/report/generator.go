@@ -37,12 +37,22 @@ type MetricData struct {
 	StatusText    string
 	Timestamp     time.Time
 	Labels        []LabelData // 改用结构化的标签数据
+
+	// 动态基线信息（baseline_enabled 时填充）
+	BaselineEnabled bool    `json:"baseline_enabled,omitempty"`
+	BaselineMean    float64 `json:"baseline_mean,omitempty"`   // 历史均值
+	BaselineStdDev  float64 `json:"baseline_stddev,omitempty"` // 历史标准差
+	BaselineMin     float64 `json:"baseline_min,omitempty"`    // 历史最小值
+	BaselineMax     float64 `json:"baseline_max,omitempty"`    // 历史最大值
+	BaselineCount   int     `json:"baseline_count,omitempty"`  // 参与统计的样本数
+	BaselineZScore  float64 `json:"baseline_zscore,omitempty"` // 当前值 z-score
 }
 
 type MetricGroup struct {
 	Type          string
 	MetricsByName map[string][]MetricData
 	Stats         GroupStats // 替换原来的 Average
+	MetricOrder   []string   // 指标名展示顺序（按最大值从大到小）
 }
 type ReportData struct {
 	Timestamp    time.Time
@@ -65,6 +75,32 @@ func GetStatusText(status string) string {
 }
 
 func GenerateReport(data ReportData) (string, error) {
+	// 将各组内指标按值从大到小排序（同指标名下多个实例按值降序展示）
+	for _, group := range data.MetricGroups {
+		for _, metrics := range group.MetricsByName {
+			sort.SliceStable(metrics, func(i, j int) bool {
+				return metrics[i].Value > metrics[j].Value
+			})
+		}
+		// 指标名按该组最大值降序排列，保证报告整体从大到小
+		names := make([]string, 0, len(group.MetricsByName))
+		maxByMetric := make(map[string]float64, len(group.MetricsByName))
+		for name, metrics := range group.MetricsByName {
+			names = append(names, name)
+			m := -math.MaxFloat64
+			for _, mm := range metrics {
+				if mm.Value > m {
+					m = mm.Value
+				}
+			}
+			maxByMetric[name] = m
+		}
+		sort.SliceStable(names, func(i, j int) bool {
+			return maxByMetric[names[i]] > maxByMetric[names[j]]
+		})
+		group.MetricOrder = names
+	}
+
 	// 计算每个组的统计信息
 	for _, group := range data.MetricGroups {
 		stats := GroupStats{
@@ -184,6 +220,13 @@ func GenerateReport(data ReportData) (string, error) {
 		valuesJSON, _ := json.Marshal(values)
 		data.ChartData[key] = template.JS(valuesJSON)
 	}
+
+	// 指标明细 JSON（MetricGroups 为指针 map，模板直接输出会是地址而非数据）
+	metricsJSON, err := json.Marshal(data.MetricGroups)
+	if err != nil {
+		return "", fmt.Errorf("marshaling metric groups: %w", err)
+	}
+	data.ChartData["metricsData"] = template.JS(metricsJSON)
 
 	// 生成报告
 	tmpl, err := template.ParseFiles("templates/report.html")
