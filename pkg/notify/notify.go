@@ -95,6 +95,93 @@ type TypeAlertSummary struct {
 	NormalCount   int
 }
 
+// ===== 消息体强类型封装（替代手写 map[string]interface{}，降低字段拼错风险）=====
+
+// --- 飞书 post 富文本消息 ---
+type feishuTextSegment struct {
+	Tag  string `json:"tag"`
+	Text string `json:"text"`
+}
+type feishuPostLang struct {
+	Title   string                `json:"title"`
+	Content [][]feishuTextSegment `json:"content"`
+}
+type feishuPostContent struct {
+	Post map[string]feishuPostLang `json:"post"`
+}
+type feishuPostMessage struct {
+	MsgType string            `json:"msg_type"`
+	Content feishuPostContent `json:"content"`
+}
+
+// --- 飞书 interactive card ---
+type feishuCardConfig struct {
+	WideScreenMode bool `json:"wide_screen_mode"`
+}
+type feishuCardText struct {
+	Tag     string `json:"tag"`
+	Content string `json:"content"`
+}
+type feishuCardHeader struct {
+	Title    feishuCardText `json:"title"`
+	Template string         `json:"template"`
+}
+type feishuCardElement struct {
+	Tag      string           `json:"tag"`
+	Text     *feishuCardText  `json:"text,omitempty"`
+	Elements []feishuCardText `json:"elements,omitempty"`
+}
+type feishuCard struct {
+	Config   feishuCardConfig    `json:"config"`
+	Header   feishuCardHeader    `json:"header"`
+	Elements []feishuCardElement `json:"elements"`
+}
+type feishuCardMessage struct {
+	MsgType string     `json:"msg_type"`
+	Card    feishuCard `json:"card"`
+}
+
+// --- 钉钉 ---
+type dingtalkTextContent struct {
+	Content string `json:"content"`
+}
+type dingtalkTextMessage struct {
+	MsgType string              `json:"msgtype"`
+	Text    dingtalkTextContent `json:"text"`
+}
+type dingtalkActionCardMessage struct {
+	MsgType    string            `json:"msgtype"`
+	ActionCard map[string]string `json:"actionCard"`
+}
+
+// --- 企业微信 ---
+type wecomTextContent struct {
+	Content string `json:"content"`
+}
+type wecomTextMessage struct {
+	MsgType string           `json:"msgtype"`
+	Text    wecomTextContent `json:"text"`
+}
+type wecomMarkdownContent struct {
+	Content string `json:"content"`
+}
+type wecomMarkdownMessage struct {
+	MsgType  string               `json:"msgtype"`
+	Markdown wecomMarkdownContent `json:"markdown"`
+}
+type wecomAppMarkdownMessage struct {
+	ToUser                 string               `json:"touser"`
+	MsgType                string               `json:"msgtype"`
+	AgentID                int                  `json:"agentid"`
+	Markdown               wecomMarkdownContent `json:"markdown"`
+	EnableDuplicateCheck   int                  `json:"enable_duplicate_check"`
+	DuplicateCheckInterval int                  `json:"duplicate_check_interval"`
+}
+type wecomEmailToUserIDRequest struct {
+	Email     string `json:"email"`
+	EmailType int    `json:"email_type"`
+}
+
 // calculateAlertSummary 从报告数据中计算告警汇总
 func CalculateAlertSummary(data report.ReportData) AlertSummary {
 	summary := AlertSummary{}
@@ -237,20 +324,15 @@ func SendFeishuWithContext(ctx context.Context, config FeishuConfig, reportPath 
 		reportLink,
 	)
 
-	// 组装消息体（Feishu 富文本消息）
-	messageContent := map[string]interface{}{
-		"msg_type": "post",
-		"content": map[string]interface{}{
-			"post": map[string]interface{}{
-				"zh_cn": map[string]interface{}{
-					"title": "巡检报告",
-					"content": []interface{}{
-						[]interface{}{
-							map[string]interface{}{
-								"tag":  "text",
-								"text": text,
-							},
-						},
+	// 组装消息体（Feishu 富文本消息，强类型结构体）
+	messageContent := feishuPostMessage{
+		MsgType: "post",
+		Content: feishuPostContent{
+			Post: map[string]feishuPostLang{
+				"zh_cn": {
+					Title: "巡检报告",
+					Content: [][]feishuTextSegment{
+						{{Tag: "text", Text: text}},
 					},
 				},
 			},
@@ -298,31 +380,20 @@ func SendFeishuInspectionAnalysisCard(ctx context.Context, config FeishuConfig, 
 	if strings.TrimSpace(signature) == "" {
 		signature = "由 PromAI AI 巡检自动生成"
 	}
-	card := map[string]interface{}{
-		"config": map[string]interface{}{"wide_screen_mode": true},
-		"header": map[string]interface{}{
-			"title":    map[string]interface{}{"tag": "plain_text", "content": fmt.Sprintf("🤖 AI 巡检分析 · %s", jobName)},
-			"template": "blue",
+	card := feishuCard{
+		Config: feishuCardConfig{WideScreenMode: true},
+		Header: feishuCardHeader{
+			Title:    feishuCardText{Tag: "plain_text", Content: fmt.Sprintf("🤖 AI 巡检分析 · %s", jobName)},
+			Template: "blue",
 		},
-		"elements": []interface{}{
-			map[string]interface{}{
-				"tag":  "div",
-				"text": map[string]interface{}{"tag": "lark_md", "content": metaLines},
-			},
-			map[string]interface{}{"tag": "hr"},
-			map[string]interface{}{
-				"tag":  "div",
-				"text": map[string]interface{}{"tag": "lark_md", "content": md},
-			},
-			map[string]interface{}{
-				"tag": "note",
-				"elements": []interface{}{
-					map[string]interface{}{"tag": "plain_text", "content": signature},
-				},
-			},
+		Elements: []feishuCardElement{
+			{Tag: "div", Text: &feishuCardText{Tag: "lark_md", Content: metaLines}},
+			{Tag: "hr"},
+			{Tag: "div", Text: &feishuCardText{Tag: "lark_md", Content: md}},
+			{Tag: "note", Elements: []feishuCardText{{Tag: "plain_text", Content: signature}}},
 		},
 	}
-	payload := map[string]interface{}{"msg_type": "interactive", "card": card}
+	payload := feishuCardMessage{MsgType: "interactive", Card: card}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("JSON编码失败: %v", err)
@@ -379,19 +450,14 @@ func SendFeishuText(ctx context.Context, config FeishuConfig, title, text string
 		log.Printf("飞书文本消息超长，已截断至 %d 字", maxRunes)
 	}
 
-	messageContent := map[string]interface{}{
-		"msg_type": "post",
-		"content": map[string]interface{}{
-			"post": map[string]interface{}{
-				"zh_cn": map[string]interface{}{
-					"title": title,
-					"content": []interface{}{
-						[]interface{}{
-							map[string]interface{}{
-								"tag":  "text",
-								"text": text,
-							},
-						},
+	messageContent := feishuPostMessage{
+		MsgType: "post",
+		Content: feishuPostContent{
+			Post: map[string]feishuPostLang{
+				"zh_cn": {
+					Title: title,
+					Content: [][]feishuTextSegment{
+						{{Tag: "text", Text: text}},
 					},
 				},
 			},
@@ -475,10 +541,7 @@ func SendDingtalkText(ctx context.Context, config DingtalkConfig, title, text st
 	if r := []rune(content); len(r) > 4000 {
 		content = string(r[:4000]) + "\n\n...(内容过长已截断)"
 	}
-	payload := map[string]interface{}{
-		"msgtype": "text",
-		"text":    map[string]interface{}{"content": content},
-	}
+	payload := dingtalkTextMessage{MsgType: "text", Text: dingtalkTextContent{Content: content}}
 	return postNotifyJSON(ctx, webhook, payload, "钉钉")
 }
 
@@ -497,10 +560,7 @@ func SendWeChatWorkText(ctx context.Context, config WeChatWorkConfig, title, tex
 	if r := []rune(content); len(r) > 4000 {
 		content = string(r[:4000]) + "\n\n...(内容过长已截断)"
 	}
-	payload := map[string]interface{}{
-		"msgtype": "text",
-		"text":    map[string]interface{}{"content": content},
-	}
+	payload := wecomTextMessage{MsgType: "text", Text: wecomTextContent{Content: content}}
 	return postNotifyJSON(ctx, config.Webhook, payload, "企业微信")
 }
 
@@ -630,9 +690,9 @@ func SendDingtalkWithContext(ctx context.Context, config DingtalkConfig, reportP
 	}
 
 	// 使用 actionCard 提供稳定的跳转按钮，避免 markdown 链接在钉钉内不可点击
-	messageContent := map[string]interface{}{
-		"msgtype": "actionCard",
-		"actionCard": map[string]string{
+	messageContent := dingtalkActionCardMessage{
+		MsgType: "actionCard",
+		ActionCard: map[string]string{
 			"title": "巡检报告",
 			"text": fmt.Sprintf("## 🔍 巡检报告 %s\n\n"+
 				"### ⌚ 巡检时间\n\n"+
@@ -1023,10 +1083,10 @@ func SendWeChatWorkWithWebhook(ctx context.Context, botKey string, proxyURL stri
 			summary.CriticalCount+summary.WarningCount, summary.CriticalCount, summary.WarningCount, summary.NormalCount)
 	}
 
-	messageContent := map[string]interface{}{
-		"msgtype": "markdown",
-		"markdown": map[string]interface{}{
-			"content": fmt.Sprintf("【监测报告】`%s`巡检结果 %s\n\n"+
+	messageContent := wecomMarkdownMessage{
+		MsgType: "markdown",
+		Markdown: wecomMarkdownContent{
+			Content: fmt.Sprintf("【监测报告】`%s`巡检结果 %s\n\n"+
 				"### ⏰ 巡检时间\n"+
 				"%s\n\n"+
 				"### 📊 分类巡检结果\n"+
@@ -1165,10 +1225,10 @@ func SendWeChatWorkWithContext(ctx context.Context, config WeChatWorkConfig, rep
 			summary.CriticalCount+summary.WarningCount, summary.CriticalCount, summary.WarningCount, summary.NormalCount)
 	}
 
-	messageContent := map[string]interface{}{
-		"msgtype": "markdown",
-		"markdown": map[string]interface{}{
-			"content": fmt.Sprintf("【监测报告】`%s`巡检结果 %s\n\n"+
+	messageContent := wecomMarkdownMessage{
+		MsgType: "markdown",
+		Markdown: wecomMarkdownContent{
+			Content: fmt.Sprintf("【监测报告】`%s`巡检结果 %s\n\n"+
 				"### ⏰ 巡检时间\n"+
 				"%s\n\n"+
 				"### 📊 分类巡检结果\n"+
@@ -1316,10 +1376,7 @@ func getUserIDByEmail(ctx context.Context, config WeChatAppConfig, email string)
 	apiURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/user/get_userid_by_email?access_token=%s", accessToken)
 
 	// 构建请求体
-	requestBody := map[string]interface{}{
-		"email":      email,
-		"email_type": 1, // 1-企业邮箱
-	}
+	requestBody := wecomEmailToUserIDRequest{Email: email, EmailType: 1} // email_type: 1-企业邮箱
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return "", fmt.Errorf("构建请求失败: %v", err)
@@ -1533,15 +1590,13 @@ func SendWeChatAppWithContext(ctx context.Context, config WeChatAppConfig, repor
 		log.Printf("邮箱转换: %s -> %s", toUser, convertedToUser)
 	}
 
-	messageContent := map[string]interface{}{
-		"touser":  convertedToUser,
-		"msgtype": "markdown",
-		"agentid": config.AgentID,
-		"markdown": map[string]interface{}{
-			"content": content,
-		},
-		"enable_duplicate_check":   0,
-		"duplicate_check_interval": 1800,
+	messageContent := wecomAppMarkdownMessage{
+		ToUser:                 convertedToUser,
+		MsgType:                "markdown",
+		AgentID:                config.AgentID,
+		Markdown:               wecomMarkdownContent{Content: content},
+		EnableDuplicateCheck:   0,
+		DuplicateCheckInterval: 1800,
 	}
 
 	jsonData, err := json.Marshal(messageContent)

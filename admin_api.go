@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -427,10 +428,78 @@ func (a *AdminAPI) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// ===== 登录防爆破 =====
+// 按客户端 IP 维度统计登录失败次数，超过阈值后锁定一段时间，防止暴力破解。
+type loginFailInfo struct {
+	count       int
+	lockedUntil time.Time
+}
+
+var (
+	loginFailMu      sync.Mutex
+	loginFailures    = make(map[string]*loginFailInfo) // key: 客户端IP
+	loginMaxFails    = 5                               // 连续失败次数上限
+	loginLockMinutes = 5                               // 锁定分钟数
+)
+
+// clientIP 提取客户端 IP（去除端口）
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// loginLocked 返回是否被锁定及剩余等待时间
+func loginLocked(ip string) (bool, time.Duration) {
+	loginFailMu.Lock()
+	defer loginFailMu.Unlock()
+	info, ok := loginFailures[ip]
+	if !ok || info.count < loginMaxFails {
+		return false, 0
+	}
+	if time.Now().Before(info.lockedUntil) {
+		return true, time.Until(info.lockedUntil)
+	}
+	// 锁定到期自动解除
+	delete(loginFailures, ip)
+	return false, 0
+}
+
+// recordLoginFail 记录一次登录失败，达到阈值则触发锁定
+func recordLoginFail(ip string) {
+	loginFailMu.Lock()
+	defer loginFailMu.Unlock()
+	info := loginFailures[ip]
+	if info == nil {
+		info = &loginFailInfo{}
+		loginFailures[ip] = info
+	}
+	info.count++
+	if info.count >= loginMaxFails {
+		info.lockedUntil = time.Now().Add(time.Duration(loginLockMinutes) * time.Minute)
+		log.Printf("[Auth] IP %s 连续 %d 次登录失败，已锁定 %d 分钟", ip, info.count, loginLockMinutes)
+	}
+}
+
+// clearLoginFail 登录成功后清零失败记录
+func clearLoginFail(ip string) {
+	loginFailMu.Lock()
+	defer loginFailMu.Unlock()
+	delete(loginFailures, ip)
+}
+
 // handleLogin 处理登录请求
 func (a *AdminAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeError(w, 405, "不支持的请求方法")
+		return
+	}
+	ip := clientIP(r)
+	if locked, wait := loginLocked(ip); locked {
+		log.Printf("[Auth] 拒绝已锁定 IP 的登录尝试: %s", ip)
+		writeError(w, 429, fmt.Sprintf("登录尝试次数过多，请 %s 后再试", wait.Round(time.Second)))
 		return
 	}
 	var req struct {
@@ -447,9 +516,11 @@ func (a *AdminAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Username != a.authUser || req.Password != a.authPass {
 		log.Printf("[Auth] 登录失败: %s (密码错误)", req.Username)
+		recordLoginFail(ip)
 		writeError(w, 401, "用户名或密码错误")
 		return
 	}
+	clearLoginFail(ip)
 	token, err := generateToken(req.Username, a.jwtSecret)
 	if err != nil {
 		log.Printf("[Auth] 生成令牌失败: %v", err)

@@ -56,6 +56,10 @@
         <el-form-item label="保留天数">
           <el-input-number v-model="reportCleanupMaxAge" :min="1" :max="365" style="width: 100%;" />
         </el-form-item>
+        <el-form-item label="告警历史保留天数">
+          <el-input-number v-model="alertHistoryRetentionDays" :min="1" :max="3650" style="width: 100%;" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">超过该天数的告警历史每天 03:00 自动清理，默认 30 天</div>
+        </el-form-item>
       </el-form>
     </div>
 
@@ -206,6 +210,7 @@ const saving = ref(false)
 const form = ref<Record<string, string>>({
   project_name: '', cron_schedule: '', report_cleanup_cron: '0 0 * * *',
   report_cleanup_enabled: 'true', report_cleanup_max_age: '7',
+  alert_history_retention_days: '30',
   ai_enabled: 'false', ai_default_model: '',
   platform_name: 'PromAI', platform_subtitle: '运维监控平台',
   report_signature: '由 PromAI AI 巡检自动生成',
@@ -219,6 +224,10 @@ const reportCleanupEnabled = computed({
 const reportCleanupMaxAge = computed({
   get: () => parseInt(form.value.report_cleanup_max_age || '7'),
   set: (v: number) => { form.value.report_cleanup_max_age = String(v) },
+})
+const alertHistoryRetentionDays = computed({
+  get: () => parseInt(form.value.alert_history_retention_days || '30'),
+  set: (v: number) => { form.value.alert_history_retention_days = String(v) },
 })
 const aiEnabled = computed({
   get: () => form.value.ai_enabled === 'true',
@@ -296,6 +305,7 @@ async function handleSave() {
       report_cleanup_cron: form.value.report_cleanup_cron,
       report_cleanup_enabled: form.value.report_cleanup_enabled,
       report_cleanup_max_age: form.value.report_cleanup_max_age,
+      alert_history_retention_days: form.value.alert_history_retention_days,
       ai_enabled: form.value.ai_enabled,
       ai_default_model: form.value.ai_default_model,
       platform_name: form.value.platform_name,

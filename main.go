@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -157,6 +158,9 @@ func main() {
 			}
 		}
 	}
+
+	// 配置告警历史清理（按保留天数删除历史告警，防止表无限增长）
+	startAlertHistoryCleanup(config)
 
 	// 启动 HTTP 服务器
 	log.Printf("==========================================")
@@ -373,6 +377,32 @@ func startGlobalScheduler(config *config.Config, collector *metrics.Collector) {
 
 	globalScheduler.Start()
 	log.Printf("[Cron] 定时调度器已启动（时区: %s，cron 表达式按该时区触发）", time.Now().Location().String())
+}
+
+// startAlertHistoryCleanup 启动告警历史自动清理：每天凌晨 3 点删除超过保留天数的历史记录。
+// 保留天数读取系统设置 alert_history_retention_days（默认 30），可在系统设置中修改。
+func startAlertHistoryCleanup(config *config.Config) {
+	retentionDays := 30
+	if v := database.GetAppSettingDefault("alert_history_retention_days", "30"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			retentionDays = n
+		}
+	}
+	ah := cron.New()
+	if _, err := ah.AddFunc("0 3 * * *", func() {
+		cutoff := time.Now().AddDate(0, 0, -retentionDays)
+		res := database.DB.Where("created_at < ?", cutoff).Delete(&database.AlertHistory{})
+		if res.Error != nil {
+			log.Printf("告警历史清理失败: %v", res.Error)
+			return
+		}
+		log.Printf("告警历史清理完成: 删除 %d 条超过 %d 天的记录", res.RowsAffected, retentionDays)
+	}); err != nil {
+		log.Printf("设置告警历史清理任务失败: %v", err)
+	} else {
+		ah.Start()
+		log.Printf("告警历史清理任务已启动，保留天数: %d，执行周期: 每日 03:00", retentionDays)
+	}
 }
 
 func resolveConfigScheduleDatasourceID() *uint {

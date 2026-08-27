@@ -237,17 +237,17 @@ func ensureMetricCatalog(cfg *config.Config) error {
 				continue
 			}
 			if err := DB.Model(&existing).Updates(map[string]any{
-				"description":         payload.Description,
-				"query":               payload.Query,
-				"threshold":           payload.Threshold,
-				"threshold_type":      payload.ThresholdType,
-				"threshold_status":    payload.ThresholdStatus,
-				"unit":                payload.Unit,
-				"labels_json":         payload.LabelsJSON,
-				"sort_order":          payload.SortOrder,
-				"baseline_enabled":    payload.BaselineEnabled,
-				"baseline_window":     payload.BaselineWindow,
-				"baseline_zscore":     payload.BaselineZScore,
+				"description":          payload.Description,
+				"query":                payload.Query,
+				"threshold":            payload.Threshold,
+				"threshold_type":       payload.ThresholdType,
+				"threshold_status":     payload.ThresholdStatus,
+				"unit":                 payload.Unit,
+				"labels_json":          payload.LabelsJSON,
+				"sort_order":           payload.SortOrder,
+				"baseline_enabled":     payload.BaselineEnabled,
+				"baseline_window":      payload.BaselineWindow,
+				"baseline_zscore":      payload.BaselineZScore,
 				"baseline_min_samples": payload.BaselineMinSamples,
 			}).Error; err != nil {
 				return err
@@ -289,11 +289,12 @@ func ensureNotificationChannels(cfg *config.Config) error {
 
 func ensureAppSettings(cfg *config.Config) error {
 	settings := map[string]string{
-		"project_name":           cfg.ProjectName,
-		"cron_schedule":          cfg.CronSchedule,
-		"report_cleanup_enabled": fmt.Sprintf("%v", cfg.ReportCleanup.Enabled),
-		"report_cleanup_max_age": fmt.Sprintf("%d", cfg.ReportCleanup.MaxAge),
-		"report_cleanup_cron":    cfg.ReportCleanup.CronSchedule,
+		"project_name":                 cfg.ProjectName,
+		"cron_schedule":                cfg.CronSchedule,
+		"report_cleanup_enabled":       fmt.Sprintf("%v", cfg.ReportCleanup.Enabled),
+		"report_cleanup_max_age":       fmt.Sprintf("%d", cfg.ReportCleanup.MaxAge),
+		"report_cleanup_cron":          cfg.ReportCleanup.CronSchedule,
+		"alert_history_retention_days": "30", // 告警历史保留天数，超期自动清理
 	}
 	for key, value := range settings {
 		var s AppSetting

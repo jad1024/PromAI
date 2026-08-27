@@ -52,9 +52,10 @@
         <el-table-column label="时间" width="170">
           <template #default="{ row }">{{ dayjs(row.created_at).format('YYYY-MM-DD HH:mm') }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button size="small" text @click="viewReport(row)" style="color: var(--cyan);">查看</el-button>
+            <el-button size="small" text @click="downloadDocx(row)" style="color: var(--emerald);">Word</el-button>
             <el-button size="small" text @click="handleDelete(row)" style="color: var(--red);">删除</el-button>
           </template>
         </el-table-column>
@@ -109,6 +110,12 @@ async function fetchData() {
 
 function viewReport(row: ReportRecord) {
   const filename = row.file_path?.replace(/^reports\//, '')
+  window.open('/api/promai/reports/' + filename, '_blank')
+}
+
+function downloadDocx(row: ReportRecord) {
+  const filename = (row.file_path?.replace(/^reports\//, '') || '').replace(/\.html$/i, '.docx')
+  if (!filename) { ElMessage.warning('报告文件路径无效'); return }
   window.open('/api/promai/reports/' + filename, '_blank')
 }
 
