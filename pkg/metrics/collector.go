@@ -285,7 +285,11 @@ func validateMetricData(data report.MetricData, configLabels map[string]string) 
 	return nil
 }
 
-// getStatus 获取状态 - 支持threshold_status配置
+// getStatus 获取状态 - 支持threshold_status配置。
+// 纯阈值触发判断：满足配置条件返回配置状态（critical/warning/...），否则正常。
+// 刻意不设置"接近阈值预警告"区间：10% 余量对 less（小于）类指标（如命中率
+// 越高越好）会把 100%、99% 等正常值误报为警告，且与告警规则评估器
+// checkThreshold / evalThreshold 的语义保持一致。
 func getStatus(value, threshold float64, thresholdType, thresholdStatus string) string {
 	if thresholdType == "" {
 		thresholdType = "greater"
@@ -294,20 +298,19 @@ func getStatus(value, threshold float64, thresholdType, thresholdStatus string) 
 		thresholdStatus = "critical" // 默认阈值触发时为严重
 	}
 
-	// 判断是否触发阈值条件
 	triggered := false
 	switch thresholdType {
-	case "greater":
+	case "greater", "gt", ">":
 		triggered = value > threshold
-	case "greater_equal":
+	case "greater_equal", "ge", ">=":
 		triggered = value >= threshold
-	case "less":
+	case "less", "lt", "<":
 		triggered = value < threshold
-	case "less_equal":
+	case "less_equal", "le", "<=":
 		triggered = value <= threshold
-	case "equal":
+	case "equal", "eq", "==":
 		triggered = value == threshold
-	case "not_equal":
+	case "not_equal", "ne", "!=":
 		triggered = value != threshold
 	}
 
@@ -315,34 +318,7 @@ func getStatus(value, threshold float64, thresholdType, thresholdStatus string) 
 		// 阈值条件触发，返回配置的状态
 		return thresholdStatus
 	}
-
-	// 未触发阈值条件，判断是否接近阈值（警告状态）
-	const warningMargin = 0.1 // 10% 的预警告区间
-	warningTriggered := false
-	switch thresholdType {
-	case "greater", "greater_equal":
-		if threshold > 0 {
-			warningTriggered = value >= threshold*(1-warningMargin)
-		}
-	case "less", "less_equal":
-		if threshold > 0 {
-			warningTriggered = value <= threshold*(1+warningMargin)
-		}
-	case "equal":
-		if threshold > 0 {
-			warningTriggered = math.Abs(value-threshold) <= threshold*0.2
-		}
-	case "not_equal":
-		if threshold > 0 {
-			warningTriggered = math.Abs(value-threshold) <= threshold*0.1
-		}
-	}
-
-	if warningTriggered {
-		return "warning"
-	}
-
-	// 既未触发阈值也未接近阈值，正常状态
+	// 未触发阈值条件，正常状态
 	return "normal"
 }
 
