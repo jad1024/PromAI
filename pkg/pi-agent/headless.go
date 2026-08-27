@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -323,6 +324,8 @@ func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string) st
 
 // collectActiveAlerts 收集当前活跃告警（firing/pending），供巡检 AI 分析作为上下文。
 // 覆盖本地告警与外部告警源（n9e/华为云）汇入的实例。
+// 每条告警输出完整信息：名称/级别/来源/状态/持续时长/当前值/阈值/标签/注解，
+// 避免只传 alertname 导致 AI 分析缺乏上下文。
 func collectActiveAlerts(max int) []string {
 	if max <= 0 {
 		max = 15
@@ -347,12 +350,19 @@ func collectActiveAlerts(max int) []string {
 	for _, r := range rules {
 		ruleNames[r.ID] = r.Name
 	}
-	// 数据源名映射（本地告警；外部告警取不到则显示 external）
+	// 数据源名映射（本地告警）
 	var dss []database.DataSource
 	database.DB.Select("id, name").Find(&dss)
 	dsNames := make(map[uint]string, len(dss))
 	for _, d := range dss {
 		dsNames[d.ID] = d.Name
+	}
+	// 外部告警源名映射（n9e/华为云/通用 webhook 等）
+	var extSources []database.ExternalAlertSource
+	database.DB.Select("id, name, type").Find(&extSources)
+	extNames := make(map[uint]string, len(extSources))
+	for _, s := range extSources {
+		extNames[s.ID] = fmt.Sprintf("%s(%s)", s.Name, s.Type)
 	}
 
 	lines := make([]string, 0, len(insts))
@@ -366,6 +376,9 @@ func collectActiveAlerts(max int) []string {
 			name = fmt.Sprintf("告警#%d", in.RuleID)
 		}
 		ds := dsNames[in.DatasourceID]
+		if src := extNames[in.ExternalSourceID]; src != "" {
+			ds = src
+		}
 		if ds == "" {
 			ds = "external"
 		}
@@ -373,19 +386,52 @@ func collectActiveAlerts(max int) []string {
 		if sev == "" {
 			sev = "unknown"
 		}
-		detail := fmt.Sprintf("- [%s] %s（数据源: %s，状态: %s，已持续 %s）", sev, name, ds, in.State, durationHuman(time.Since(in.ActiveAt)))
-		extra := make([]string, 0, 4)
-		for _, k := range []string{"instance", "pod", "namespace", "service", "exported_service", "node", "hostname", "job", "device", "mountpoint"} {
-			if v, ok := labels[k]; ok && v != "" {
-				extra = append(extra, fmt.Sprintf("%s=%s", k, v))
-			}
+		detail := fmt.Sprintf("- [%s] %s（来源: %s，状态: %s，已持续 %s）", sev, name, ds, in.State, durationHuman(time.Since(in.ActiveAt)))
+
+		// 当前值 / 阈值（外部告警与本地告警均有，AI 判断严重程度的关键）
+		if in.Value != 0 || in.Threshold != 0 {
+			detail += fmt.Sprintf(" 当前值=%.2f 阈值=%.2f", in.Value, in.Threshold)
 		}
-		if len(extra) > 0 {
-			detail += " " + strings.Join(extra, ", ")
+
+		// 完整标签（排除已在名称中展示的 alertname，其余全部输出，不挑固定 key）
+		labelParts := make([]string, 0, len(labels))
+		for k, v := range labels {
+			if k == "alertname" || v == "" {
+				continue
+			}
+			labelParts = append(labelParts, fmt.Sprintf("%s=%s", k, truncateValue(v, 120)))
+		}
+		sort.Strings(labelParts)
+		if len(labelParts) > 0 {
+			detail += " 标签: " + strings.Join(labelParts, ", ")
+		}
+
+		// 注解关键信息（summary/description 等，外部告警解析结果大多在这里）
+		if ann := parseAlertLabels(in.AnnotationsJSON); len(ann) > 0 {
+			annParts := make([]string, 0, len(ann))
+			for k, v := range ann {
+				if v == "" {
+					continue
+				}
+				annParts = append(annParts, fmt.Sprintf("%s=%s", k, truncateValue(v, 150)))
+			}
+			sort.Strings(annParts)
+			if len(annParts) > 0 {
+				detail += " 注解: " + strings.Join(annParts, " | ")
+			}
 		}
 		lines = append(lines, detail)
 	}
 	return lines
+}
+
+// truncateValue 超长文本截断，防止告警注解/标签值撑爆 prompt
+func truncateValue(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }
 
 // parseAlertLabels 解析告警实例的标签 JSON（兼容数值/布尔值）
