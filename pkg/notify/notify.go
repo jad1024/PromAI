@@ -268,7 +268,8 @@ func SendFeishuWithContext(ctx context.Context, config FeishuConfig, reportPath 
 
 // SendFeishuInspectionAnalysisCard 以飞书互动卡片（interactive card）推送 AI 巡检分析结果。
 // 相比纯文本：卡片标题头 + 元信息加粗分栏 + 分隔线 + lark_md 渲染正文（标题/加粗/列表自动转换），更直观可读。
-func SendFeishuInspectionAnalysisCard(ctx context.Context, config FeishuConfig, jobName, datasource, reportPath, aiText string) error {
+// signature 为卡片底部署名，可在系统设置中自定义（report_signature）。
+func SendFeishuInspectionAnalysisCard(ctx context.Context, config FeishuConfig, jobName, datasource, reportPath, aiText, signature string) error {
 	if !config.Enabled {
 		log.Printf("飞书通知未启用，跳过 AI 巡检分析卡片发送")
 		return nil
@@ -294,6 +295,9 @@ func SendFeishuInspectionAnalysisCard(ctx context.Context, config FeishuConfig, 
 		metaLines += fmt.Sprintf("\n**📄 巡检报告**：%s", reportPath)
 	}
 
+	if strings.TrimSpace(signature) == "" {
+		signature = "由 PromAI AI 巡检自动生成"
+	}
 	card := map[string]interface{}{
 		"config": map[string]interface{}{"wide_screen_mode": true},
 		"header": map[string]interface{}{
@@ -313,7 +317,7 @@ func SendFeishuInspectionAnalysisCard(ctx context.Context, config FeishuConfig, 
 			map[string]interface{}{
 				"tag": "note",
 				"elements": []interface{}{
-					map[string]interface{}{"tag": "plain_text", "content": "由 PromAI AI 巡检自动生成"},
+					map[string]interface{}{"tag": "plain_text", "content": signature},
 				},
 			},
 		},

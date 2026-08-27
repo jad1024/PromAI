@@ -17,8 +17,8 @@
               </defs>
             </svg>
           </div>
-          <h2>PromAI</h2>
-          <p>运维监控平台</p>
+          <h2>{{ platformName }}</h2>
+          <p>{{ platformSubtitle }}</p>
         </div>
         <el-form ref="formRef" :model="form" :rules="rules" @keyup.enter="handleLogin">
           <el-form-item prop="username">
@@ -38,22 +38,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 import type { FormInstance } from 'element-plus'
-import { login, getMe } from '../api'
+import { login, getPublicBrand } from '../api'
 
 const router = useRouter()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const error = ref('')
 const form = ref({ username: '', password: '' })
+const platformName = ref('PromAI')
+const platformSubtitle = ref('运维监控平台')
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
+
+onMounted(async () => {
+  try {
+    const r = await getPublicBrand()
+    if (r.data.platform_name) platformName.value = r.data.platform_name
+    if (r.data.platform_subtitle) platformSubtitle.value = r.data.platform_subtitle
+  } catch {}
+})
 
 async function handleLogin() {
   const valid = await formRef.value?.validate().catch(() => false)

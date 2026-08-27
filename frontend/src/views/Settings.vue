@@ -25,6 +25,25 @@
     </div>
 
     <div class="form-section">
+      <h3><el-icon :size="16" :color="getCssVar('--cyan')"><Monitor /></el-icon> 品牌设置</h3>
+      <p class="section-desc">自定义登录页、侧边栏与通知卡片中展示的平台名称和署名文案</p>
+      <el-form :model="form" label-width="160px" style="max-width: 600px;">
+        <el-form-item label="平台名称">
+          <el-input v-model="form.platform_name" placeholder="PromAI" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">显示在登录页与侧边栏顶部，默认：PromAI</div>
+        </el-form-item>
+        <el-form-item label="平台副标题">
+          <el-input v-model="form.platform_subtitle" placeholder="运维监控平台" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">显示在平台名称下方，默认：运维监控平台</div>
+        </el-form-item>
+        <el-form-item label="巡检署名">
+          <el-input v-model="form.report_signature" placeholder="由 PromAI AI 巡检自动生成" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">AI 巡检分析通知卡片底部署名，默认：由 PromAI AI 巡检自动生成</div>
+        </el-form-item>
+      </el-form>
+    </div>
+
+    <div class="form-section">
       <h3><el-icon :size="16" color="#f59e0b"><Delete /></el-icon> 报告清理设置</h3>
       <el-form :model="form" label-width="160px" style="max-width: 600px;">
         <el-form-item label="启用自动清理">
@@ -188,6 +207,8 @@ const form = ref<Record<string, string>>({
   project_name: '', cron_schedule: '', report_cleanup_cron: '0 0 * * *',
   report_cleanup_enabled: 'true', report_cleanup_max_age: '7',
   ai_enabled: 'false', ai_default_model: '',
+  platform_name: 'PromAI', platform_subtitle: '运维监控平台',
+  report_signature: '由 PromAI AI 巡检自动生成',
 })
 const modelList = ref<AIModelForm[]>([])
 
@@ -277,6 +298,9 @@ async function handleSave() {
       report_cleanup_max_age: form.value.report_cleanup_max_age,
       ai_enabled: form.value.ai_enabled,
       ai_default_model: form.value.ai_default_model,
+      platform_name: form.value.platform_name,
+      platform_subtitle: form.value.platform_subtitle,
+      report_signature: form.value.report_signature,
     }
     payload.ai_models = JSON.stringify(modelList.value)
     await updateSettings(payload)

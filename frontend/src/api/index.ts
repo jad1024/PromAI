@@ -131,6 +131,8 @@ export const validatePromQL = (datasourceId: number | undefined, query: string) 
 // Settings
 export const getSettings = () => api.get<Record<string, string>>('/settings')
 export const updateSettings = (s: Record<string, string>) => api.put('/settings', s)
+// 公开品牌信息（无需登录，用于登录页/侧边栏展示平台名称）
+export const getPublicBrand = () => api.get<{ platform_name: string; platform_subtitle: string; report_signature: string }>('/public/brand')
 
 // Inspect
 export const triggerInspect = (req: InspectRequest) => api.post('/inspect', req)

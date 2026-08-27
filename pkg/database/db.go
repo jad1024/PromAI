@@ -320,6 +320,14 @@ func GetAppSetting(key string) string {
 	return s.Value
 }
 
+// GetAppSettingDefault 读取系统设置项，不存在或为空时返回默认值（用于品牌名等可自定义文案）
+func GetAppSettingDefault(key, def string) string {
+	if v := strings.TrimSpace(GetAppSetting(key)); v != "" {
+		return v
+	}
+	return def
+}
+
 func InitializeTemplatesFromMetricTypes() error {
 	var metricTypes []MetricType
 	if err := DB.Order("sort_order asc, id asc").Find(&metricTypes).Error; err != nil {

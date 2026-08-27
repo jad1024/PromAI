@@ -322,6 +322,8 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 
 	// Public auth routes (no auth required)
 	mux.HandleFunc("/api/promai/auth/login", logged(a.handleLogin))
+	// 公开品牌信息（登录页/侧边栏展示可自定义的平台名称，无需鉴权）
+	mux.HandleFunc("/api/promai/public/brand", logged(a.handlePublicBrand))
 
 	// Auth middleware helper
 	auth := a.authMiddleware
@@ -1613,6 +1615,16 @@ func (a *AdminAPI) handleSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, 405, "不支持的请求方法")
 	}
+}
+
+// handlePublicBrand 公开返回可自定义的品牌文案（无需登录）。
+// 供登录页 / 侧边栏展示平台名称与副标题，避免把品牌文字写死在代码里。
+func (a *AdminAPI) handlePublicBrand(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{
+		"platform_name":     database.GetAppSettingDefault("platform_name", "PromAI"),
+		"platform_subtitle": database.GetAppSettingDefault("platform_subtitle", "运维监控平台"),
+		"report_signature":  database.GetAppSettingDefault("report_signature", "由 PromAI AI 巡检自动生成"),
+	})
 }
 
 func (a *AdminAPI) syncAIConfigSetting(key, value string) {

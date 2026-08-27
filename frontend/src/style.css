@@ -326,6 +326,12 @@ body {
   gap: 8px;
 }
 
+.section-desc {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  margin: -12px 0 16px;
+}
+
 /* Status Badge */
 .status-badge {
   display: inline-flex;

@@ -20,8 +20,8 @@
                 </svg>
               </div>
               <div class="logo-text-group" v-show="!collapsed">
-                <span class="logo-text">PromAI</span>
-                <span class="logo-sub">运维监控平台</span>
+                <span class="logo-text">{{ platformName }}</span>
+                <span class="logo-sub">{{ platformSubtitle }}</span>
               </div>
             </div>
             <el-button text class="collapse-btn" @click="toggleCollapse">
@@ -156,7 +156,7 @@
           <el-header class="app-header">
             <div class="header-left">
               <el-breadcrumb separator="/">
-                <el-breadcrumb-item :to="{ path: '/dashboard' }">PromAI</el-breadcrumb-item>
+                <el-breadcrumb-item :to="{ path: '/dashboard' }">{{ platformName }}</el-breadcrumb-item>
                 <el-breadcrumb-item v-if="currentMeta?.title">{{ currentMeta.title }}</el-breadcrumb-item>
               </el-breadcrumb>
             </div>
@@ -207,7 +207,7 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from './composables/useTheme'
-import { getAlertStats } from './api'
+import { getAlertStats, getPublicBrand } from './api'
 
 const route = useRoute()
 const router = useRouter()
@@ -217,6 +217,16 @@ const currentRoute = computed(() => route.path)
 const currentMeta = computed(() => route.meta)
 const showLayout = computed(() => route.path !== '/login')
 const username = ref(localStorage.getItem('username') || 'Admin')
+const platformName = ref('PromAI')
+const platformSubtitle = ref('运维监控平台')
+
+async function loadBrand() {
+  try {
+    const r = await getPublicBrand()
+    if (r.data.platform_name) platformName.value = r.data.platform_name
+    if (r.data.platform_subtitle) platformSubtitle.value = r.data.platform_subtitle
+  } catch {}
+}
 
 const { currentTheme, setTheme, themeOptions } = useTheme()
 const alertUnreadCount = ref(0)
@@ -224,7 +234,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 async function pollAlertCount() {
   try { const r = await getAlertStats(); alertUnreadCount.value = r.data.unread_count || 0 } catch {}
 }
-onMounted(() => { pollAlertCount(); pollTimer = setInterval(pollAlertCount, 15000) })
+onMounted(() => { loadBrand(); pollAlertCount(); pollTimer = setInterval(pollAlertCount, 15000) })
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
 function toggleCollapse() {

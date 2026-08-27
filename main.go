@@ -656,7 +656,8 @@ func runInspectionAIAnalysis(job database.CronJob, reportData *report.ReportData
 				if reportData != nil {
 					dsName = reportData.Datasource
 				}
-				if err := notify.SendFeishuInspectionAnalysisCard(ctx, fcfg, job.Name, dsName, reportURL, res.Text); err != nil {
+				if err := notify.SendFeishuInspectionAnalysisCard(ctx, fcfg, job.Name, dsName, reportURL, res.Text,
+					database.GetAppSettingDefault("report_signature", "由 PromAI AI 巡检自动生成")); err != nil {
 					log.Printf("[PiAgent] 推送 AI 巡检分析到飞书失败 (channel=%d): %v", ch.ID, err)
 				} else {
 					pushed++
