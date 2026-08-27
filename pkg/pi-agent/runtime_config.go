@@ -152,6 +152,8 @@ func buildToolMetricTypesFromConfigs(db DB, selectedConfigs []database.MetricCon
 				Labels:          labels,
 				ThresholdType:   cfg.ThresholdType,
 				ThresholdStatus: cfg.ThresholdStatus,
+				WarningEnabled:  cfg.WarningEnabled,
+				WarningMargin:   cfg.WarningMargin,
 			})
 		}
 		result = append(result, item)

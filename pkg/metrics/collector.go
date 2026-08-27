@@ -50,8 +50,8 @@ func NewCollectorWithURL(client PrometheusAPI, config *config.Config, prometheus
 }
 
 // UpdatePrometheusURL 更新Prometheus URL和客户端
-func (c *Collector) UpdatePrometheusURL(url,username,password string) error {
-	client, err := prometheus.NewClient(url,username,password)
+func (c *Collector) UpdatePrometheusURL(url, username, password string) error {
+	client, err := prometheus.NewClient(url, username, password)
 	if err != nil {
 		return fmt.Errorf("creating prometheus client: %w", err)
 	}
@@ -135,7 +135,7 @@ func (c *Collector) CollectMetricsWithContext(ctx context.Context) (*report.Repo
 						continue
 					}
 
-					status := getStatus(value, metric.Threshold, metric.ThresholdType, metric.ThresholdStatus)
+					status := getStatus(value, metric.Threshold, metric.ThresholdType, metric.ThresholdStatus, metric.WarningEnabled, metric.WarningMargin)
 					metricData := report.MetricData{
 						Name:          metric.Name,
 						Description:   metric.Description,
@@ -286,11 +286,11 @@ func validateMetricData(data report.MetricData, configLabels map[string]string) 
 }
 
 // getStatus 获取状态 - 支持threshold_status配置。
-// 纯阈值触发判断：满足配置条件返回配置状态（critical/warning/...），否则正常。
-// 刻意不设置"接近阈值预警告"区间：10% 余量对 less（小于）类指标（如命中率
-// 越高越好）会把 100%、99% 等正常值误报为警告，且与告警规则评估器
-// checkThreshold / evalThreshold 的语义保持一致。
-func getStatus(value, threshold float64, thresholdType, thresholdStatus string) string {
+// 阈值触发判断：满足配置条件返回配置状态（critical/warning/...），否则继续判断
+// 预警告带（warningEnabled 开启时）：值未触发主阈值、但已逼近阈值（偏差在
+// warningMargin 百分比内）时返回 warning。预警带只落在"未触发主阈值"的那一侧，
+// 避免对远离阈值的正常值误报（如命中率阈值 95 的 less 条件，100% 不会被误报）。
+func getStatus(value, threshold float64, thresholdType, thresholdStatus string, warningEnabled bool, warningMargin float64) string {
 	if thresholdType == "" {
 		thresholdType = "greater"
 	}
@@ -318,7 +318,33 @@ func getStatus(value, threshold float64, thresholdType, thresholdStatus string) 
 		// 阈值条件触发，返回配置的状态
 		return thresholdStatus
 	}
-	// 未触发阈值条件，正常状态
+
+	// 接近阈值预警告：仅在配置开启、宽度为正、且阈值有效时生效。
+	// 预警带必须落在"未触发主阈值"的那一侧，且只覆盖紧贴阈值的区间。
+	if warningEnabled && warningMargin > 0 && threshold > 0 {
+		margin := warningMargin / 100.0 // 配置为百分比
+		switch thresholdType {
+		case "greater", "gt", ">", "greater_equal", "ge", ">=":
+			// 主阈值：value >(=) threshold；预警侧：阈值下方且贴近阈值
+			if value < threshold && value >= threshold*(1-margin) {
+				return "warning"
+			}
+		case "less", "lt", "<", "less_equal", "le", "<=":
+			// 主阈值：value <(=) threshold；预警侧：阈值上方且贴近阈值
+			if value > threshold && value <= threshold*(1+margin) {
+				return "warning"
+			}
+		case "equal", "eq", "==":
+			// 未触发时 value != threshold，接近阈值即预警
+			if value != threshold && math.Abs(value-threshold) <= threshold*margin {
+				return "warning"
+			}
+		case "not_equal", "ne", "!=":
+			// 未触发时 value == threshold（浮点几乎不会），无预警带
+		}
+	}
+
+	// 既未触发阈值也未落入预警带，正常状态
 	return "normal"
 }
 

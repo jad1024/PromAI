@@ -36,6 +36,9 @@ export interface MetricConfig {
   baseline_window?: string
   baseline_zscore?: number
   baseline_min_samples?: number
+  // 接近阈值预警告（可选，默认关闭）
+  warning_enabled?: boolean
+  warning_margin?: number
   sort_order?: number
   created_at?: string
   updated_at?: string

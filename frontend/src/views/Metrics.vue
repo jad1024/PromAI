@@ -39,14 +39,15 @@
             <code style="font-size: 11px; background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 6px; color: var(--text-tertiary); display: block; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.query }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="阈值 / 基线" width="160">
+        <el-table-column label="阈值 / 基线" width="200">
           <template #default="{ row }">
-            <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
               <span v-if="row.threshold" style="color: var(--text-secondary); font-size: 13px;">
                 {{ thresholdOpLabel(row.threshold_type) }} {{ row.threshold }}{{ row.unit }}
               </span>
               <span v-else style="color: var(--text-tertiary);">-</span>
               <el-tag v-if="row.baseline_enabled" size="small" style="background: rgba(168,85,247,0.15); color: #a855f7; border: none;">动态基线</el-tag>
+              <el-tag v-if="row.warning_enabled" size="small" style="background: rgba(245,158,11,0.15); color: #f59e0b; border: none;">预警{{ row.warning_margin || 5 }}%</el-tag>
             </div>
           </template>
         </el-table-column>
@@ -190,6 +191,22 @@
             基于历史窗口的均值 / 标准差判断异常（|z| ≥ 阈值 → 警告，|z| ≥ 2×阈值 → 严重）；样本不足时自动回退静态阈值。窗口格式如 7d / 24h / 168h。
           </div>
         </template>
+        <el-form-item label="接近阈值预警">
+          <el-switch v-model="configForm.warning_enabled" active-text="开启（值逼近阈值时提前标为警告）" inactive-text="关闭（仅按阈值条件判断）" />
+        </el-form-item>
+        <template v-if="configForm.warning_enabled">
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="预警带宽度">
+                <el-input-number v-model="configForm.warning_margin" :min="0.5" :max="50" :step="0.5" style="width: 100%;" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <div style="font-size: 11px; color: var(--text-tertiary); margin-top: -12px; margin-bottom: 8px;">
+            宽度按阈值的百分比计算。例如阈值 95、宽度 5%：值在 95~99.75 之间时预警，100% 正常。
+            命中率/成功率等「越高越好」的指标建议用 2%~5% 的小值，避免正常高值被误报。
+          </div>
+        </template>
         <el-form-item label="单位">
           <el-input v-model="configForm.unit" placeholder="%, MB, ms" />
         </el-form-item>
@@ -274,7 +291,7 @@ const filterDS = ref<number | ''>('')
 const configDialog = ref(false)
 const editingConfigId = ref<number | null>(null)
 const configFormRef = ref<FormInstance>()
-const configForm = ref<MetricConfig>({ metric_type_id: 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '', baseline_enabled: false, baseline_window: '7d', baseline_zscore: 3, baseline_min_samples: 10 })
+const configForm = ref<MetricConfig>({ metric_type_id: 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '', baseline_enabled: false, baseline_window: '7d', baseline_zscore: 3, baseline_min_samples: 10, warning_enabled: false, warning_margin: 5 })
 const labelsJsonStr = ref('')
 const validationResult = ref<any>(null)
 const configRules = {
@@ -341,7 +358,7 @@ async function fetchData() {
 
 function openCreateConfig() {
   editingConfigId.value = null
-  configForm.value = { metric_type_id: metricTypes.value[0]?.id || 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '', baseline_enabled: false, baseline_window: '7d', baseline_zscore: 3, baseline_min_samples: 10 }
+  configForm.value = { metric_type_id: metricTypes.value[0]?.id || 0, datasource_id: undefined, name: '', query: '', description: '', threshold: 0, threshold_type: 'greater', threshold_status: 'critical', unit: '', labels_json: '', baseline_enabled: false, baseline_window: '7d', baseline_zscore: 3, baseline_min_samples: 10, warning_enabled: false, warning_margin: 5 }
   labelsJsonStr.value = ''
   validationResult.value = null
   configDialog.value = true

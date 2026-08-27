@@ -164,6 +164,8 @@ func buildMetricTypesFromConfigs(selectedConfigs []database.MetricConfig) []conf
 				BaselineWindow:     item.BaselineWindow,
 				BaselineZScore:     item.BaselineZScore,
 				BaselineMinSamples: item.BaselineMinSamples,
+				WarningEnabled:     item.WarningEnabled,
+				WarningMargin:      item.WarningMargin,
 			})
 		}
 		result = append(result, mtCfg)
@@ -190,6 +192,8 @@ func buildMetricTypesFromConfigs(selectedConfigs []database.MetricConfig) []conf
 				BaselineWindow:     item.BaselineWindow,
 				BaselineZScore:     item.BaselineZScore,
 				BaselineMinSamples: item.BaselineMinSamples,
+				WarningEnabled:     item.WarningEnabled,
+				WarningMargin:      item.WarningMargin,
 			})
 		}
 		result = append(result, mtCfg)

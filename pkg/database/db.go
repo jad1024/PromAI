@@ -225,6 +225,8 @@ func ensureMetricCatalog(cfg *config.Config) error {
 				BaselineWindow:     metric.BaselineWindow,
 				BaselineZScore:     metric.BaselineZScore,
 				BaselineMinSamples: metric.BaselineMinSamples,
+				WarningEnabled:     metric.WarningEnabled,
+				WarningMargin:      metric.WarningMargin,
 			}
 			if err != nil {
 				if err == gorm.ErrRecordNotFound {
@@ -249,6 +251,8 @@ func ensureMetricCatalog(cfg *config.Config) error {
 				"baseline_window":      payload.BaselineWindow,
 				"baseline_zscore":      payload.BaselineZScore,
 				"baseline_min_samples": payload.BaselineMinSamples,
+				"warning_enabled":      payload.WarningEnabled,
+				"warning_margin":       payload.WarningMargin,
 			}).Error; err != nil {
 				return err
 			}

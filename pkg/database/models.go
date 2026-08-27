@@ -58,6 +58,10 @@ type MetricConfig struct {
 	BaselineWindow     string  `gorm:"size:20" json:"baseline_window"`         // 历史窗口，如 7d
 	BaselineZScore     float64 `gorm:"default:3" json:"baseline_zscore"`       // z-score 阈值
 	BaselineMinSamples int     `gorm:"default:10" json:"baseline_min_samples"` // 最少样本数
+
+	// 接近阈值预警告（可选，默认关闭）
+	WarningEnabled bool    `gorm:"default:false" json:"warning_enabled"` // 是否开启接近阈值预警（阈值未触发但逼近时标为警告）
+	WarningMargin  float64 `gorm:"default:5" json:"warning_margin"`      // 预警带宽度：占阈值的百分比，如 5 = 5%
 }
 
 type NotificationChannel struct {
