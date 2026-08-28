@@ -133,6 +133,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '告警历史', icon: 'Histogram' },
   },
   {
+    path: '/alert-events',
+    name: 'AlertEvents',
+    component: () => import('../views/AlertEvents.vue'),
+    meta: { title: '事件聚合', icon: 'Files' },
+  },
+  {
     path: '/user-manual',
     name: 'UserManual',
     component: () => import('../views/UserManual.vue'),

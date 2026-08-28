@@ -319,3 +319,51 @@ export interface ExternalSyncResult {
   total: number
   status: string
 }
+
+// ===== 告警事件聚合（分析级） =====
+// 说明：通知层面的分组/去重/抑制由 Alertmanager 负责，PromAI 不做。
+// 这里仅做"分析级聚合"，用于人看懂告警、噪音治理与 AI 上下文降噪。
+
+export interface AlertEvent {
+  rule_id: number
+  rule_name: string
+  datasource_id: number
+  datasource_name: string
+  severity: string
+  state: string // ongoing | resolved
+  first_fired_at: string
+  last_event_at: string
+  firing_count: number
+  raw_count: number
+  flap_count: number
+  flapping: boolean
+  peak_value: number
+  threshold: number
+  // 同一规则在其他数据源上时间窗重叠的集群名（跨集群关联提示，非硬分组）
+  correlated_datasources: string[]
+}
+
+export interface AlertEventAgg {
+  events: AlertEvent[]
+  total_raw: number
+  total_events: number
+  compression: number
+  window_hours: number
+}
+
+export interface NoiseTopRule {
+  rule_id: number
+  rule_name: string
+  datasource_id: number
+  datasource_name: string
+  severity: string
+  firing_count: number
+  flap_count: number
+  flapping: boolean
+  raw_count: number
+}
+
+export interface AlertNoiseTop {
+  items: NoiseTopRule[]
+  window_hours: number
+}

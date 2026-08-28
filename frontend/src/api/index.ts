@@ -204,6 +204,7 @@ export const testAiModel = (model: {
 import type {
   AlertRule, AlertInstance, AlertHistoryRow, HistorySession, AlertSilence, AlertInhibit, AlertRoute,
   AlertGroup, AlertNotifyLog, AlertStats, EvaluatorStatus, TestRuleResult, TimelineGroup,
+  AlertEventAgg, AlertNoiseTop,
 } from '../types/alerting'
 
 export const getAlertRules = (params?: { keyword?: string; severity?: string; enabled?: string; origin?: string; source_type?: string; page?: number; page_size?: number }) =>
@@ -293,6 +294,16 @@ export const getAlertNotifyLogs = (params?: {
 
 export const getAlertStats = () => api.get<AlertStats>('/alert/stats')
 export const getAlertEvaluatorStatus = () => api.get<EvaluatorStatus>('/alert/evaluator/status')
+
+// ===== 告警事件聚合（分析级，不触碰通知链路） =====
+// 把 AlertHistory 原始事件流按「规则 + 数据源 + 时间窗」聚合为事件，
+// 用于事件视图、噪音排行，以及 AI 根因分析的上下文降噪。
+export const getAlertEvents = (params?: {
+  hours?: number; datasource_id?: number; severity?: string; rule_name?: string; keyword?: string; limit?: number
+}) => api.get<AlertEventAgg>('/alert/events', { params })
+
+export const getAlertNoiseTop = (params?: { hours?: number; limit?: number }) =>
+  api.get<AlertNoiseTop>('/alert/noise-top', { params })
 
 // ===== 外部告警源（n9e / 华为云 / 通用 webhook） =====
 import type { ExternalAlertSource, ExternalRule, ExternalSyncResult } from '../types/alerting'

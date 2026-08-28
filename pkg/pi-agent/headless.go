@@ -171,6 +171,8 @@ func (h *AgentHandler) AnalyzeAlertRootCause(ctx context.Context, rule *database
 }
 
 // crossClusterAlert 跨集群（数据源）关联告警摘要，作为根因分析上下文。
+// 已按「规则 + 集群」折叠：同一规则在同一集群上的多个实例合并为一条，
+// 避免 flapping 或批量实例把上下文刷满、浪费 token。
 type crossClusterAlert struct {
 	RuleName       string
 	DatasourceName string
@@ -178,11 +180,30 @@ type crossClusterAlert struct {
 	Labels         string
 	Value          float64
 	ActiveAt       time.Time
+	// CollapsedCount 折叠的实例数；>1 时 prompt 会标注"（共 N 个实例）"
+	CollapsedCount int
+	// Flapping 该规则在近 30 分钟内的触发↔恢复来回次数达到阈值，判定为震荡
+	Flapping bool
+	FlapCount int
 }
+
+// crossClusterRawLimit 跨集群上下文的原始数据拉取上限（聚合前的候选池大小）。
+const crossClusterRawLimit = 200
+
+// crossClusterMaxEntries 折叠后进入 AI 上下文的最大条目数。
+// 超过则按 严重级别 → 实例数 → 最近活跃 排序截断，保证上下文干净且 token 可控。
+const crossClusterMaxEntries = 8
 
 // fetchCrossClusterAlerts 查询当前其他集群（数据源）近 30 分钟内活跃的告警，
 // 作为跨集群关联上下文。不同集群的告警可能同源（如共享依赖故障）也可能完全独立，
 // 是否关联交由 AI 结合时间/指标/标签判断，不做硬性分组。
+//
+// 去重策略（避免噪音污染上下文、节省 token）：
+//  1. 按「规则 + 集群」折叠：同一规则在同一集群上的 N 个实例合并为 1 条，
+//     保留峰值实例的代表性标签，并标注折叠数量；
+//  2. 震荡（flapping）规则单独标记：近 30 分钟触发/恢复来回 ≥ 3 次，
+//     AI 应降低其权重，不要把它当成跨集群关联的强证据；
+//  3. 排序截断到 crossClusterMaxEntries 条。
 func (h *AgentHandler) fetchCrossClusterAlerts(instances []database.AlertInstance) []crossClusterAlert {
 	if h.db == nil || len(instances) == 0 {
 		return nil
@@ -199,15 +220,19 @@ func (h *AgentHandler) fetchCrossClusterAlerts(instances []database.AlertInstanc
 	var raw []database.AlertInstance
 	if err := h.db.Where("state IN ? AND datasource_id NOT IN ? AND last_eval_at > ?",
 		[]string{"pending", "firing"}, dsIDs, cutoff).
-		Order("active_at DESC").Limit(10).Find(&raw).Error; err != nil || len(raw) == 0 {
+		Order("active_at DESC").Limit(crossClusterRawLimit).Find(&raw).Error; err != nil || len(raw) == 0 {
 		return nil
 	}
 
+	// 名称解析（规则名 / 数据源名）
 	ruleIDs := make([]uint, 0, len(raw))
 	allDsIDs := make([]uint, 0, len(raw))
-	seenDs := map[uint]bool{}
+	seenDs, seenRule := map[uint]bool{}, map[uint]bool{}
 	for _, r := range raw {
-		ruleIDs = append(ruleIDs, r.RuleID)
+		if !seenRule[r.RuleID] {
+			seenRule[r.RuleID] = true
+			ruleIDs = append(ruleIDs, r.RuleID)
+		}
 		if !seenDs[r.DatasourceID] {
 			seenDs[r.DatasourceID] = true
 			allDsIDs = append(allDsIDs, r.DatasourceID)
@@ -228,22 +253,136 @@ func (h *AgentHandler) fetchCrossClusterAlerts(instances []database.AlertInstanc
 		}
 	}
 
-	related := make([]crossClusterAlert, 0, len(raw))
+	// 1) 按「规则 + 集群」折叠
+	type groupKey struct {
+		ruleID uint
+		dsID   uint
+	}
+	type group struct {
+		item     crossClusterAlert
+		count    int
+		peakSev  string
+		firstAt  time.Time
+	}
+	groups := map[groupKey]*group{}
+	order := make([]groupKey, 0, len(raw))
 	for _, r := range raw {
-		labels := r.LabelsJSON
-		if len(labels) > 160 {
-			labels = labels[:160] + "..."
+		k := groupKey{r.RuleID, r.DatasourceID}
+		g, ok := groups[k]
+		if !ok {
+			labels := r.LabelsJSON
+			if len(labels) > 160 {
+				labels = labels[:160] + "..."
+			}
+			g = &group{
+				item: crossClusterAlert{
+					RuleName:       ruleNames[r.RuleID],
+					DatasourceName: dsNames[r.DatasourceID],
+					Severity:       r.Severity,
+					Labels:         labels,
+					Value:          r.Value,
+					ActiveAt:       r.ActiveAt,
+				},
+				peakSev: r.Severity,
+				firstAt: r.ActiveAt,
+			}
+			groups[k] = g
+			order = append(order, k)
 		}
-		related = append(related, crossClusterAlert{
-			RuleName:       ruleNames[r.RuleID],
-			DatasourceName: dsNames[r.DatasourceID],
-			Severity:       r.Severity,
-			Labels:         labels,
-			Value:          r.Value,
-			ActiveAt:       r.ActiveAt,
-		})
+		g.count++
+		// 保留峰值实例的信息（数值最高的实例最具代表性）
+		if r.Value > g.item.Value {
+			g.item.Value = r.Value
+			g.item.ActiveAt = r.ActiveAt
+			labels := r.LabelsJSON
+			if len(labels) > 160 {
+				labels = labels[:160] + "..."
+			}
+			g.item.Labels = labels
+		}
+		if severityRank(r.Severity) > severityRank(g.peakSev) {
+			g.peakSev = r.Severity
+			g.item.Severity = r.Severity
+		}
+		if r.ActiveAt.Before(g.firstAt) {
+			g.firstAt = r.ActiveAt
+		}
+	}
+
+	// 2) 震荡检测：近 30 分钟各 (规则,集群) 的 firing/resolved 事件计数
+	type flapRow struct {
+		RuleID       uint
+		DatasourceID uint
+		EventType    string
+		Cnt          int64
+	}
+	var flapRows []flapRow
+	if err := h.db.Model(&database.AlertHistory{}).
+		Select("rule_id, datasource_id, event_type, count(*) as cnt").
+		Where("rule_id IN ? AND datasource_id IN ? AND event_type IN ? AND COALESCE(occurred_at, created_at) >= ?",
+			ruleIDs, allDsIDs, []string{"firing", "resolved"}, cutoff).
+		Group("rule_id, datasource_id, event_type").Scan(&flapRows).Error; err == nil {
+		// 触发与恢复成对出现才可能震荡，用较小的一侧作为来回次数下界
+		stats := map[groupKey][2]int64{} // [firing, resolved]
+		for _, fr := range flapRows {
+			s := stats[groupKey{fr.RuleID, fr.DatasourceID}]
+			if fr.EventType == "firing" {
+				s[0] += fr.Cnt
+			} else {
+				s[1] += fr.Cnt
+			}
+			stats[groupKey{fr.RuleID, fr.DatasourceID}] = s
+		}
+		for k, s := range stats {
+			g, ok := groups[k]
+			if !ok {
+				continue
+			}
+			flaps := s[0]
+			if s[1] < flaps {
+				flaps = s[1]
+			}
+			g.item.FlapCount = int(flaps)
+			g.item.Flapping = flaps >= 3
+		}
+	}
+
+	// 3) 排序：严重级别 → 是否震荡（震荡靠后，降权）→ 实例数 → 最近活跃
+	related := make([]crossClusterAlert, 0, len(order))
+	for _, k := range order {
+		g := groups[k]
+		g.item.CollapsedCount = g.count
+		related = append(related, g.item)
+	}
+	sort.SliceStable(related, func(i, j int) bool {
+		if ri, rj := severityRank(related[i].Severity), severityRank(related[j].Severity); ri != rj {
+			return ri > rj
+		}
+		if related[i].Flapping != related[j].Flapping {
+			return !related[i].Flapping // 非震荡优先
+		}
+		if related[i].CollapsedCount != related[j].CollapsedCount {
+			return related[i].CollapsedCount > related[j].CollapsedCount
+		}
+		return related[i].ActiveAt.After(related[j].ActiveAt)
+	})
+	if len(related) > crossClusterMaxEntries {
+		related = related[:crossClusterMaxEntries]
 	}
 	return related
+}
+
+// severityRank 严重级别排序权重，用于跨集群上下文排序。
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 3
+	case "warning":
+		return 2
+	case "info":
+		return 1
+	}
+	return 0
 }
 
 // buildAlertRootCausePrompt 组装带跨集群关联上下文的告警根因分析 Prompt。
@@ -607,13 +746,21 @@ func buildAlertRootCausePrompt(rule *database.AlertRule, instances []database.Al
 	if len(related) > 0 {
 		b.WriteString("\n## 其他集群当前活跃告警（近30分钟）\n")
 		b.WriteString("以下为其他数据源/集群当前活跃的告警，可能与本告警同源（如共享依赖、网络、上游服务故障），也可能完全无关。请结合时间、指标类型、标签综合判断关联性：\n")
+		b.WriteString("（已按「规则 + 集群」折叠，括号内为折叠的实例数；震荡规则的触发↔恢复反复，请降低其作为关联证据的权重）\n")
 		for _, r := range related {
 			active := ""
 			if !r.ActiveAt.IsZero() {
 				active = r.ActiveAt.Format("01-02 15:04")
 			}
-			b.WriteString(fmt.Sprintf("- [%s][%s] 规则: %s，值: %.2f，触发: %s，标签: %s\n",
-				r.DatasourceName, r.Severity, r.RuleName, r.Value, active, r.Labels))
+			suffix := ""
+			if r.CollapsedCount > 1 {
+				suffix += fmt.Sprintf("（共 %d 个实例）", r.CollapsedCount)
+			}
+			if r.Flapping {
+				suffix += fmt.Sprintf("[震荡 x%d，勿作为强关联证据]", r.FlapCount)
+			}
+			b.WriteString(fmt.Sprintf("- [%s][%s] 规则: %s，值: %.2f，触发: %s，标签: %s%s\n",
+				r.DatasourceName, r.Severity, r.RuleName, r.Value, active, r.Labels, suffix))
 		}
 	}
 

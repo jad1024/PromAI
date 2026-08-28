@@ -118,6 +118,10 @@
                   <el-icon><Histogram /></el-icon>
                   <span>告警历史</span>
                 </el-menu-item>
+                <el-menu-item index="/alert-events">
+                  <el-icon><Files /></el-icon>
+                  <span>事件聚合</span>
+                </el-menu-item>
               </el-sub-menu>
               <el-menu-item index="/ai">
                 <el-icon><MagicStick /></el-icon>
