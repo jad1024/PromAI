@@ -95,10 +95,12 @@ prometheus_password: ""       # 可选
 project_name: "巡检报告"
 
 # 管理后台认证（首次启动时同步到 SQLite）
+# 注意：密码/jwt_secret 必须显式设置，使用默认值或缺失时服务会拒绝启动。
+#       生产环境建议通过环境变量注入：PROMAI_AUTH_PASSWORD / PROMAI_JWT_SECRET
 auth:
   username: "admin"
-  password: "admin123"
-  jwt_secret: "your-secret-key"
+  password: "CHANGE_ME_ADMIN_PASSWORD"
+  jwt_secret: "CHANGE_ME_32_CHAR_RANDOM_SECRET_0123456789"
 
 # 定时巡检任务 (Cron 表达式)
 # 示例：每天 08:00 和 17:00 执行

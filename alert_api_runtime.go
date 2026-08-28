@@ -536,6 +536,7 @@ func (a *AdminAPI) handleAlertHistory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		tx.Commit()
+		auditLog("alert_history_delete", fmt.Sprintf("all=%v fingerprints=%d 条", body.All, len(body.Fingerprints)))
 		writeJSON(w, map[string]interface{}{"ok": true, "deleted": len(body.Fingerprints)})
 	default:
 		writeError(w, 405, "method not allowed")

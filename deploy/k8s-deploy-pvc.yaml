@@ -30,11 +30,11 @@ data:
     prometheus_url: "http://prometheus-k8s.monitoring.svc.cluster.local:9090"
     project_name: "PromAI"
     cron_schedule: "00 08,17 * * *"
-    # 管理后台登录认证
+    # 管理后台登录认证（必须显式设置，使用默认值/缺失时服务拒绝启动）
     auth:
       username: "admin"
-      password: "promai@2026"
-      jwt_secret: "promai-jwt-secret-change-in-production"
+      password: "CHANGE_ME_ADMIN_PASSWORD"
+      jwt_secret: "CHANGE_ME_32_CHAR_RANDOM_SECRET_0123456789"
     report_cleanup:
       enabled: true
       max_age: 7

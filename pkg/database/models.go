@@ -1,7 +1,10 @@
 package database
 
 import (
+	"encoding/json"
 	"time"
+
+	"PromAI/pkg/crypto"
 
 	"gorm.io/gorm"
 )
@@ -11,7 +14,7 @@ type DataSource struct {
 	Name                string     `gorm:"uniqueIndex;size:100;not null" json:"name"`
 	URL                 string     `gorm:"size:500;not null" json:"url"`
 	Username            string     `gorm:"size:100" json:"username"`
-	Password            string     `gorm:"size:100" json:"password"`
+	Password            string     `gorm:"size:300" json:"password"`
 	IsDefault           bool       `gorm:"default:false" json:"is_default"`
 	Enabled             bool       `gorm:"default:true" json:"enabled"`
 	TemplateID          *uint      `json:"template_id"`
@@ -26,6 +29,18 @@ type DataSource struct {
 	HealthStatus        string     `gorm:"-" json:"health_status"`
 	ReportStatus        string     `gorm:"-" json:"report_status,omitempty"`
 	LastReportAt        *time.Time `gorm:"-" json:"last_report_at,omitempty"`
+}
+
+// BeforeSave 保存前加密密码（gorm 自动调用；注意 Updates(map) 不触发 hook，需在调用处手动加密）
+func (d *DataSource) BeforeSave(*gorm.DB) error {
+	d.Password = encryptField(d.Password)
+	return nil
+}
+
+// AfterFind 读出后解密密码，保证业务代码拿到的始终是明文
+func (d *DataSource) AfterFind(*gorm.DB) error {
+	d.Password = decryptField(d.Password)
+	return nil
 }
 
 type MetricType struct {
@@ -72,6 +87,68 @@ type NotificationChannel struct {
 	ConfigJSON  string    `gorm:"type:text" json:"config_json"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// BeforeSave 保存前加密 ConfigJSON 中的敏感字段（secret/password 等）。
+// 注意：Updates(map) 不触发 hook，需要在调用处手动调用 EncryptNotifyConfigJSON。
+func (n *NotificationChannel) BeforeSave(*gorm.DB) error {
+	n.ConfigJSON = EncryptNotifyConfigJSON(n.ChannelType, n.ConfigJSON)
+	return nil
+}
+
+// AfterFind 读出后解密 ConfigJSON 敏感字段，业务代码直接使用明文。
+func (n *NotificationChannel) AfterFind(*gorm.DB) error {
+	n.ConfigJSON = DecryptNotifyConfigJSON(n.ChannelType, n.ConfigJSON)
+	return nil
+}
+
+// EncryptNotifyConfigJSON 对通知渠道 JSON 配置中的敏感字段值加密（幂等：已是 enc: 前缀跳过）。
+func EncryptNotifyConfigJSON(channelType, rawJSON string) string {
+	return transformNotifyConfigJSON(channelType, rawJSON, true)
+}
+
+// DecryptNotifyConfigJSON 解密通知渠道 JSON 配置中的敏感字段（幂等：无 enc: 前缀的明文跳过）。
+func DecryptNotifyConfigJSON(channelType, rawJSON string) string {
+	return transformNotifyConfigJSON(channelType, rawJSON, false)
+}
+
+// notifySensitiveFields 各渠道在 ConfigJSON 中的敏感字段名
+var notifySensitiveFields = map[string][]string{
+	"dingtalk":   {"secret"},
+	"feishu":     {"secret"},
+	"wechat_app": {"secret"},
+	"email":      {"password"},
+}
+
+func transformNotifyConfigJSON(channelType, rawJSON string, encrypt bool) string {
+	if rawJSON == "" {
+		return rawJSON
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(rawJSON), &m); err != nil || m == nil {
+		return rawJSON
+	}
+	for _, field := range notifySensitiveFields[channelType] {
+		if v, ok := m[field].(string); ok && v != "" {
+			if encrypt {
+				if !crypto.IsEncrypted(v) {
+					if enc, err := crypto.EncryptSecret(v, getStoreKey()); err == nil {
+						m[field] = enc
+					}
+				}
+			} else {
+				if crypto.IsEncrypted(v) {
+					if dec, err := crypto.DecryptSecret(v, getStoreKey()); err == nil {
+						m[field] = dec
+					}
+				}
+			}
+		}
+	}
+	if b, err := json.Marshal(m); err == nil {
+		return string(b)
+	}
+	return rawJSON
 }
 
 type CronJob struct {
@@ -505,6 +582,24 @@ type ExternalAlertSource struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// BeforeSave 保存前加密敏感凭据（SecretKey/Password/N9eToken/Token）
+func (e *ExternalAlertSource) BeforeSave(*gorm.DB) error {
+	e.SecretKey = encryptField(e.SecretKey)
+	e.Password = encryptField(e.Password)
+	e.N9eToken = encryptField(e.N9eToken)
+	e.Token = encryptField(e.Token)
+	return nil
+}
+
+// AfterFind 读出后解密敏感凭据，业务代码直接使用明文
+func (e *ExternalAlertSource) AfterFind(*gorm.DB) error {
+	e.SecretKey = decryptField(e.SecretKey)
+	e.Password = decryptField(e.Password)
+	e.N9eToken = decryptField(e.N9eToken)
+	e.Token = decryptField(e.Token)
+	return nil
 }
 
 // ExternalRule 从外部平台同步的告警规则（只读展示，不参与本地评估）

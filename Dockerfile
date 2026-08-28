@@ -31,7 +31,9 @@ COPY --from=backend-builder /build/PromAI .
 COPY --from=frontend-builder /build/dist ./frontend/dist/
 COPY deploy/sql ./deploy/sql/
 COPY templates ./templates/
-COPY config/config.yaml ./config/config.yaml
+# config.yaml 含敏感凭据且已被 .gitignore 忽略，镜像内使用示例模板；
+# 真实凭据必须通过环境变量注入（PROMAI_AUTH_PASSWORD / PROMAI_JWT_SECRET / PROMETHEUS_PASSWORD 等）
+COPY config/config.example.yaml ./config/config.yaml
 COPY skills   ./skills/
 RUN mkdir -p /app/data /app/reports
 EXPOSE 8091

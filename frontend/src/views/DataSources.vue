@@ -417,7 +417,7 @@ import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { getDataSources, createDataSource, updateDataSource, deleteDataSource, importDatasources, applyTemplate, getAllTemplates, getAllNotifications, triggerInspect, getInspectTask, testDataSource, getSyncSources, createSyncSource, updateSyncSource, deleteSyncSource, triggerSync, getSyncLogs, batchDeleteDataSources, batchToggleDataSources, batchSetTemplate, batchSetNotify, batchApplyTemplate, batchInspect, batchSetCreds } from '../api'
+import { getDataSources, createDataSource, updateDataSource, deleteDataSource, importDatasources, applyTemplate, getAllTemplates, getAllNotifications, triggerInspect, getInspectTask, testDataSource, getSyncSources, createSyncSource, updateSyncSource, deleteSyncSource, triggerSync, getSyncLogs, batchDeleteDataSources, batchToggleDataSources, batchSetTemplate, batchSetNotify, batchApplyTemplate, batchInspect, batchSetCreds, openReportFile } from '../api'
 import type { DataSource, SyncSource } from '../types'
 
 function getCssVar(name: string): string {
@@ -688,7 +688,7 @@ async function inspectDS(row: DataSource) {
       const task = taskRes.data
       if (task.status === 'completed') {
         ElMessage.success('巡检完成')
-        if (task.report_url) window.open(task.report_url, '_blank')
+        if (task.report_url) openReportFile(String(task.report_url).replace(/^\/api\/promai\//, '')).catch((e: any) => ElMessage.error('打开报告失败：' + e.message))
         return
       }
       if (task.status === 'failed') {

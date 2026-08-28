@@ -55,6 +55,23 @@ func loadConfig(path string) (*config.Config, error) {
 	} else {
 		log.Printf("使用配置文件中的 Prometheus URL: %s", config.PrometheusURL)
 	}
+	// Prometheus 凭据允许独立于 URL 通过环境变量覆盖（避免明文写入配置文件）
+	if envPromUser := os.Getenv("PROMETHEUS_USERNAME"); envPromUser != "" {
+		config.PrometheusUsername = envPromUser
+	}
+	if envPromPass := os.Getenv("PROMETHEUS_PASSWORD"); envPromPass != "" {
+		config.PrometheusPassword = envPromPass
+	}
+	// 管理后台凭据环境变量覆盖（优先于配置文件）
+	if envAdminUser := os.Getenv("PROMAI_AUTH_USERNAME"); envAdminUser != "" {
+		config.Auth.Username = envAdminUser
+	}
+	if envAdminPass := os.Getenv("PROMAI_AUTH_PASSWORD"); envAdminPass != "" {
+		config.Auth.Password = envAdminPass
+	}
+	if envJWT := os.Getenv("PROMAI_JWT_SECRET"); envJWT != "" {
+		config.Auth.JWTSecret = envJWT
+	}
 	return &config, nil // 返回配置结构体
 }
 
@@ -95,8 +112,15 @@ func main() {
 	if envDB := os.Getenv("PROMAI_DB_PATH"); envDB != "" {
 		dbPath = envDB
 	}
+	// 先注入数据加密密钥（数据源密码/AI Key 等加解密与鉴权密钥体系一致），
+	// 必须在任何 DB 读写（含 SeedFromConfig）之前，避免使用错误密钥加密。
+	database.SetStoreKey(config.Auth.JWTSecret)
 	if err := database.InitDB(dbPath); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	// 迁移存量明文凭据为加密存储（幂等，仅处理一次）
+	if err := database.MigrateSecrets(); err != nil {
+		log.Printf("Warning: 存量凭据加密迁移失败: %v", err)
 	}
 	if err := database.ImportSQLFileIfNeeded(config); err != nil {
 		log.Fatalf("Failed to import bootstrap SQL: %v", err)
@@ -220,9 +244,25 @@ func main() {
 	log.Printf("==========================================")
 	log.Printf("服务器正在运行...")
 
-	if err := http.ListenAndServe(*port, gzipMiddleware(http.DefaultServeMux)); err != nil {
+	if err := http.ListenAndServe(*port, securityMiddleware(gzipMiddleware(http.DefaultServeMux))); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+}
+
+// securityMiddleware 全局安全加固：安全响应头 + POST 请求体大小限制。
+func securityMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 安全响应头（无论是否压缩都设置）
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// 限制请求体大小，防止超大 body 耗尽内存（webhook 内部另有 4MB 上限）
+		if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
+			r.Body = http.MaxBytesReader(w, r.Body, 32<<20) // 32MB
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func gzipMiddleware(next http.Handler) http.Handler {
@@ -263,36 +303,54 @@ var globalScheduler *cron.Cron
 var cronTaskCounter int64
 var adminAPI *AdminAPI
 
+// jwtSecretGlobal 全局 JWT 签名密钥，由 setupRoutes 从配置注入，
+// 供历史遗留路由（报告静态文件等）与 AdminAPI 之外的接口鉴权使用。
+var jwtSecretGlobal string
+
+// requireAuth 独立的 JWT 鉴权中间件（与 AdminAPI.authMiddleware 逻辑一致），
+// 用于保护 setupRoutes 中注册的历史接口。
+func requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			writeError(w, 401, "未登录")
+			return
+		}
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			writeError(w, 401, "无效的认证令牌")
+			return
+		}
+		if _, err := validateToken(parts[1], jwtSecretGlobal); err != nil {
+			log.Printf("[Auth] Token 校验失败: %v", err)
+			writeError(w, 401, "认证令牌无效或已过期")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // setupRoutes 设置 HTTP 路由
 func setupRoutes(collector *metrics.Collector, config *config.Config) *AdminAPI {
-	// 设置首页路由
+	// 注入全局 JWT 密钥（loadConfig 已做环境变量覆盖）
+	jwtSecretGlobal = config.Auth.JWTSecret
+	// 注入数据加密密钥（数据源密码/AI Key 等加解密与鉴权密钥体系一致）
+	database.SetStoreKey(jwtSecretGlobal)
+
+	// 设置首页路由（公开：重定向到前端 SPA）
 	http.HandleFunc("/api/promai/", indexHandler)
 	http.HandleFunc("/api/promai/index", indexHandler)
 
-	// 设置报告生成路由
-	http.HandleFunc("/api/promai/getreport", makeReportHandler(collector, config))
-
-	// 设置报告列表API
-	http.HandleFunc("/api/promai/reports/list", reportsListHandler)
-
-	// 设置最近活动API
-	http.HandleFunc("/api/promai/activities", recentActivitiesHandler)
-
-	// 设置静态文件服务
-	http.Handle("/api/promai/reports/", http.StripPrefix("/api/promai/reports/", http.FileServer(http.Dir("reports"))))
-
-	// 设置进度页面路由
-	http.HandleFunc("/api/promai/progress", progressHandler)
-
-	// 设置历史报告页面路由
-	http.HandleFunc("/api/promai/reports/history", reportsHandler)
-
-	// 设置状态页面路由
-	http.HandleFunc("/api/promai/status", makeStatusHandler(collector.Client, config))
-
-	// 设置任务管理相关API
-	http.HandleFunc("/api/promai/tasks", tasksHandler)
-	http.HandleFunc("/api/promai/tasks/", taskDetailHandler)
+	// 以下历史接口/静态文件均需 JWT 鉴权，防止未授权访问报告与监控数据
+	http.Handle("/api/promai/reports/", requireAuth(http.StripPrefix("/api/promai/reports/", http.FileServer(http.Dir("reports")))))
+	http.Handle("/api/promai/getreport", requireAuth(http.HandlerFunc(makeReportHandler(collector, config))))
+	http.Handle("/api/promai/reports/list", requireAuth(http.HandlerFunc(reportsListHandler)))
+	http.Handle("/api/promai/activities", requireAuth(http.HandlerFunc(recentActivitiesHandler)))
+	http.Handle("/api/promai/progress", requireAuth(http.HandlerFunc(progressHandler)))
+	http.Handle("/api/promai/reports/history", requireAuth(http.HandlerFunc(reportsHandler)))
+	http.Handle("/api/promai/status", requireAuth(http.HandlerFunc(makeStatusHandler(collector.Client, config))))
+	http.Handle("/api/promai/tasks", requireAuth(http.HandlerFunc(tasksHandler)))
+	http.Handle("/api/promai/tasks/", requireAuth(http.HandlerFunc(taskDetailHandler)))
 
 	// 将首页替换为后台登录页面（前端 SPA）
 	if _, err := os.Stat("frontend/dist"); err == nil {

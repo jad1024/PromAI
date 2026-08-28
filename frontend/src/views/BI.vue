@@ -234,7 +234,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { GridLayout, GridItem } from 'vue3-grid-layout'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
-import { getAllDataSources, getDashboardHealth, getDashboardHealthTrend } from '../api'
+import { getAllDataSources, getDashboardHealth, getDashboardHealthTrend, openReportFile } from '../api'
 import type { DataSource } from '../types'
 
 function getCssVar(name: string): string {
@@ -413,8 +413,9 @@ function switchDS(row: any) {
 }
 
 function viewReport(ds: any) {
-  if (ds.last_report_url) window.open(ds.last_report_url, '_blank')
-  else ElMessage.info('暂无报告')
+  if (ds.last_report_url) {
+    openReportFile(String(ds.last_report_url).replace(/^\/api\/promai\//, '')).catch((e: any) => ElMessage.error('打开报告失败：' + e.message))
+  } else ElMessage.info('暂无报告')
 }
 
 function exportDetailCSV() {

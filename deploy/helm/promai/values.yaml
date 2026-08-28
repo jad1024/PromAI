@@ -67,8 +67,8 @@ config:
     cron_schedule: "00 08,17 * * *"
     auth:
       username: "admin"
-      password: "promai2024"
-      jwt_secret: "promai-jwt-secret-change-in-production"
+      password: "CHANGE_ME_ADMIN_PASSWORD"   # 必填，缺失或默认值时服务拒绝启动
+      jwt_secret: "CHANGE_ME_32_CHAR_RANDOM_SECRET_0123456789"  # 必填，≥32 位随机串
     report_cleanup:
       enabled: true
       max_age: 7

@@ -141,6 +141,7 @@ func (a *AdminAPI) handleAlertRuleByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, err.Error())
 			return
 		}
+		auditLog("alert_rule_delete", fmt.Sprintf("id=%d", id))
 		writeJSON(w, map[string]interface{}{"deleted": true})
 	default:
 		writeError(w, 405, "method not allowed")

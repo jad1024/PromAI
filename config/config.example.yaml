@@ -1,0 +1,71 @@
+# ============================================================
+# PromAI 配置模板（示例）
+#
+# 部署说明：
+#   1. 复制本文件为 config/config.yaml 并按需填写
+#   2. config/config.yaml 已被 .gitignore 忽略，切勿提交真实凭据到仓库
+#   3. 所有敏感值（管理密码 / JWT 密钥 / Prometheus 密码 / AI Key）
+#      推荐通过环境变量注入，优先级高于配置文件：
+#        PROMAI_AUTH_USERNAME / PROMAI_AUTH_PASSWORD / PROMAI_JWT_SECRET
+#        PROMETHEUS_URL / PROMETHEUS_USERNAME / PROMETHEUS_PASSWORD
+#        PROMAI_STORE_KEY（数据加密密钥，建议独立设置）
+#        PROMAI_JWT_TTL（JWT 有效期小时数，默认 12）
+#        PROMAI_LOGIN_MAX_FAILS（登录失败锁定阈值，默认 5）
+#        PROMAI_LOGIN_LOCK_MINUTES（锁定分钟数，默认 5）
+#   4. PROMAI_JWT_SECRET 必须为至少 32 位随机字符串，缺失时服务拒绝启动
+# ============================================================
+
+prometheus_url: "http://prometheus.monitoring.svc.cluster.local:9090"
+prometheus_username: ""   # 无鉴权可不填；建议用 PROMETHEUS_USERNAME 环境变量
+prometheus_password: ""   # 建议用 PROMETHEUS_PASSWORD 环境变量
+
+# 管理后台登录认证（强烈建议改用环境变量 PROMAI_AUTH_USERNAME / PROMAI_AUTH_PASSWORD）
+auth:
+  username: "admin"
+  password: ""          # 必须设置非默认密码，否则服务拒绝启动
+  jwt_secret: ""        # 必须设置 ≥32 位随机字符串，否则服务拒绝启动
+
+# 多数据源配置
+data_sources:
+  - name: "cluster1"
+    url: "http://prometheus.example.com:9090"
+    username: ""
+    password: ""
+
+project_name: "巡检报告"
+
+# 定时任务：每天 8 点和 17 点执行
+cron_schedule: "00 08,17 * * *"
+
+# 报告清理
+# report_cleanup:
+#   enabled: true
+#   max_age: 30
+#   cron_schedule: "0 2 * * *"
+
+# 通知渠道（可选）
+# notifications:
+#   dingtalk:
+#     enabled: false
+#     webhook: ""
+#     secret: ""
+#   email:
+#     enabled: false
+#     smtp_host: "smtp.example.com"
+#     smtp_port: 465
+#     username: ""
+#     password: ""
+#     from: ""
+#     to: []
+
+# AI 巡检分析（可选）
+# ai:
+#   enabled: false
+#   default_model: ""
+#   models:
+#     - name: ""
+#       provider: ""
+#       model: ""
+#       base_url: ""
+#       api_key: ""
+#       max_tokens: 4096

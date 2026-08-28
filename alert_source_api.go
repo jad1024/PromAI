@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -33,6 +34,13 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// secureTokenEqual 常量时间比较两个 token，避免时序侧信道攻击。
+func secureTokenEqual(a, b string) bool {
+	ha := sha256.Sum256([]byte(a))
+	hb := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
+}
 
 // ---------- Webhook 接收 ----------
 
@@ -62,12 +70,27 @@ func (a *AdminAPI) handleExternalWebhook(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if source.ID == 0 {
-		// 无 id：尝试按 token 匹配启用的源
+		// 无 id：从启用的告警源中按 token 常量时间匹配（Token 加密存储，
+		// 无法用 SQL 明文匹配，需逐条解密后比较；AfterFind 已自动解密）
 		if token != "" {
-			database.DB.Where("enabled = ? AND token = ?", true, token).First(&source)
+			var candidates []database.ExternalAlertSource
+			database.DB.Where("enabled = ?", true).Find(&candidates)
+			for i := range candidates {
+				if secureTokenEqual(token, candidates[i].Token) {
+					source = candidates[i]
+					break
+				}
+			}
 		}
 	}
-	if source.ID > 0 && source.Token != "" && token != source.Token {
+
+	// 安全加固：必须匹配到"已启用且已配置 token"的告警源才放行。
+	// 未配置 token 的源不允许接收推送，防止伪造告警注入 / 通知轰炸。
+	if source.ID == 0 || source.Token == "" {
+		writeError(w, 401, "webhook token 校验失败")
+		return
+	}
+	if !secureTokenEqual(token, source.Token) {
 		writeError(w, 401, "webhook token 校验失败")
 		return
 	}
@@ -525,20 +548,20 @@ func (a *AdminAPI) handleAlertSourceByID(w http.ResponseWriter, r *http.Request)
 			"sync_interval": req.SyncInterval, "notify_enabled": req.NotifyEnabled,
 			"ai_analysis_enabled": req.AIAnalysisEnabled,
 		}
-		// 凭据字段：空值表示不修改
+		// 凭据字段：空值表示不修改（Updates(map) 不触发 hook，需手动加密）
 		if req.AccessKey != "" {
 			updates["access_key"] = req.AccessKey
 		}
 		if req.SecretKey != "" {
-			updates["secret_key"] = req.SecretKey
+			updates["secret_key"] = encryptSecret(req.SecretKey)
 		}
 		if req.Password != "" {
-			updates["password"] = req.Password
+			updates["password"] = encryptSecret(req.Password)
 		}
 		// n9e_token / token：直接覆盖（允许传空串清空，从而切回账号密码登录）。
 		// 前端编辑时回填真实 token，不再脱敏，避免错误 token 无法更新。
-		updates["n9e_token"] = req.N9eToken
-		updates["token"] = req.Token
+		updates["n9e_token"] = encryptSecret(req.N9eToken)
+		updates["token"] = encryptSecret(req.Token)
 		if err := database.DB.Model(&database.ExternalAlertSource{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			writeError(w, 500, "更新告警源失败: "+err.Error())
 			return

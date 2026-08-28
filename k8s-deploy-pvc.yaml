@@ -24,6 +24,13 @@ metadata:
 data:
   config.yaml: |
     prometheus_url: "http://prometheus.monitoring.svc.cluster.local:9090"
+
+    # 管理后台认证：建议不在此处填真实密码，改用环境变量注入（PROMAI_AUTH_PASSWORD / PROMAI_JWT_SECRET）
+    auth:
+      username: "admin"
+      password: ""          # 必填，缺失时服务拒绝启动
+      jwt_secret: ""        # 必填，≥32 位随机串，缺失时服务拒绝启动
+
     project_name: "PromAI"
     cron_schedule: "00 08,17 * * *"
     report_cleanup:

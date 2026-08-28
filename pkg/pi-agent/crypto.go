@@ -1,68 +1,24 @@
 package piagent
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"errors"
-	"io"
-	"log"
+	"PromAI/pkg/crypto"
 )
 
-func deriveKey(secret string) []byte {
-	h := sha256.Sum256([]byte(secret))
-	return h[:]
+// resolveKey 加密密钥解析：优先环境变量 PROMAI_STORE_KEY，其次调用方传入的 JWT secret，
+// 保证与 database 层数据加密密钥一致（防止设置 PROMAI_STORE_KEY 后两边密钥不同步）。
+func resolveKey(jwtSecret string) string {
+	if k := crypto.StoreKey(); k != "" {
+		return k
+	}
+	return jwtSecret
 }
 
+// EncryptAPIKey 加密 API Key，返回带 enc: 前缀的密文。
 func EncryptAPIKey(plaintext, jwtSecret string) (string, error) {
-	key := deriveKey(jwtSecret)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		log.Printf("[Crypto] 创建加密块失败: %v", err)
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		log.Printf("[Crypto] 创建 GCM 失败: %v", err)
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		log.Printf("[Crypto] 生成 nonce 失败: %v", err)
-		return "", err
-	}
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return crypto.EncryptSecret(plaintext, resolveKey(jwtSecret))
 }
 
+// DecryptAPIKey 解密 API Key；无 enc: 前缀的历史明文原样返回。
 func DecryptAPIKey(encoded, jwtSecret string) (string, error) {
-	key := deriveKey(jwtSecret)
-	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		log.Printf("[Crypto] Base64 解码失败: %v", err)
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		log.Printf("[Crypto] 创建解密块失败: %v", err)
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		log.Printf("[Crypto] 创建 GCM 失败: %v", err)
-		return "", err
-	}
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return "", errors.New("ciphertext too short")
-	}
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		log.Printf("[Crypto] 解密失败: %v", err)
-		return "", err
-	}
-	return string(plaintext), nil
+	return crypto.DecryptSecret(encoded, resolveKey(jwtSecret))
 }

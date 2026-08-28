@@ -37,6 +37,13 @@ api.interceptors.response.use(
 export const login = (username: string, password: string) => api.post('/auth/login', { username, password })
 export const getMe = () => api.get('/auth/me')
 
+// Reports（报告静态文件已要求 JWT 鉴权，需带 Authorization 头以 blob 方式获取）
+export async function openReportFile(url: string) {
+  const res = await api.get(url, { responseType: 'blob' })
+  const blobUrl = URL.createObjectURL(res.data)
+  window.open(blobUrl, '_blank')
+}
+
 // Data Sources
 export const getDataSources = (params?: { page?: number; page_size?: number; keyword?: string; enabled?: string }) =>
   api.get<{ items: DataSource[]; total: number; page: number; page_size: number }>('/datasources', { params })

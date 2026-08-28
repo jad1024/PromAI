@@ -29,9 +29,26 @@ spec:
         - name: PROMETHEUS_URL
           value: "http://prometheus.k8s.bruneihealth.kubehan.cn"
         - name: PROMETHEUS_USERNAME
-          value: "admin"
+          # 生产环境建议改用 Secret 注入（valueFrom: secretKeyRef）
+          value: ""
         - name: PROMETHEUS_PASSWORD
-          value: "admin"
+          value: ""
+        # 管理后台凭据（必填，缺失时服务拒绝启动）
+        - name: PROMAI_AUTH_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: promai-secrets
+              key: auth-username
+        - name: PROMAI_AUTH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: promai-secrets
+              key: auth-password
+        - name: PROMAI_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: promai-secrets
+              key: jwt-secret
         volumeMounts:
         - name: config
           mountPath: /app/config
@@ -55,6 +72,12 @@ metadata:
 data:
   config.yaml: |
     prometheus_url: "http://prometheus.k8s.bruneihealth.kubehan.cn"
+
+    # 管理后台认证：强烈建议不在此处填真实密码，改用 env Secret 注入（见 Deployment env 段）
+    auth:
+      username: "admin"
+      password: ""          # 必填，缺失时服务拒绝启动
+      jwt_secret: ""        # 必填，≥32 位随机串，缺失时服务拒绝启动
     
     # 多数据源配置
     data_sources:
@@ -80,7 +103,7 @@ data:
     notifications:
       wechat_work:
         enabled: true
-        webhook: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=0c4ef257-a6f0-430c-b454-d2b82bbd6e53"
+        webhook: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=REPLACE_WITH_YOUR_KEY"  # 必填，替换为真实企微机器人 key
         proxy_url: ""
         report_url: "http://your-k8s-node:30080"  # 需要替换为实际访问地址
     

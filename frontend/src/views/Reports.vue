@@ -80,7 +80,7 @@
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getReports, deleteReport } from '../api'
+import { getReports, deleteReport, openReportFile } from '../api'
 import type { ReportRecord } from '../types'
 
 function getCssVar(name: string): string {
@@ -110,13 +110,14 @@ async function fetchData() {
 
 function viewReport(row: ReportRecord) {
   const filename = row.file_path?.replace(/^reports\//, '')
-  window.open('/api/promai/reports/' + filename, '_blank')
+  if (!filename) { ElMessage.warning('报告文件路径无效'); return }
+  openReportFile('reports/' + filename).catch((e: any) => ElMessage.error('打开报告失败：' + e.message))
 }
 
 function downloadDocx(row: ReportRecord) {
   const filename = (row.file_path?.replace(/^reports\//, '') || '').replace(/\.html$/i, '.docx')
   if (!filename) { ElMessage.warning('报告文件路径无效'); return }
-  window.open('/api/promai/reports/' + filename, '_blank')
+  openReportFile('reports/' + filename).catch((e: any) => ElMessage.error('下载报告失败：' + e.message))
 }
 
 async function handleDelete(row: ReportRecord) {

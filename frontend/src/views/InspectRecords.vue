@@ -62,7 +62,7 @@
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
-import { getInspectRecords } from '../api'
+import { getInspectRecords, openReportFile } from '../api'
 
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -105,7 +105,9 @@ async function fetchRecords() {
 }
 
 function viewReport(row: InspectRecord) {
-  window.open('/api/promai/reports/' + row.report_url.split('/').pop(), '_blank')
+  const filename = row.report_url.split('/').pop()
+  if (!filename) { ElMessage.warning('报告文件路径无效'); return }
+  openReportFile('reports/' + filename).catch((e: any) => ElMessage.error('打开报告失败：' + e.message))
 }
 
 onMounted(fetchRecords)

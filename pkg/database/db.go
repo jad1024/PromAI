@@ -145,7 +145,7 @@ func ensureDefaultDatasource(cfg *config.Config) error {
 		"name":       firstNonEmpty(ds.Name, "默认数据源"),
 		"url":        cfg.PrometheusURL,
 		"username":   cfg.PrometheusUsername,
-		"password":   cfg.PrometheusPassword,
+		"password":   encryptField(cfg.PrometheusPassword), // Updates(map) 不触发 hook，手动加密
 		"is_default": true,
 	}
 	return DB.Model(&ds).Updates(updates).Error
@@ -177,7 +177,7 @@ func ensureConfiguredDatasources(cfg *config.Config) error {
 			"name":     item.Name,
 			"url":      item.URL,
 			"username": item.UserName,
-			"password": item.Password,
+			"password": encryptField(item.Password), // Updates(map) 不触发 hook，手动加密
 		}).Error; err != nil {
 			return err
 		}

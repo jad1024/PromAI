@@ -277,6 +277,7 @@ type AdminAPI struct {
 	authUser       string
 	authPass       string
 	jwtSecret      string
+	jwtTTL         time.Duration
 	db             *gorm.DB
 	syncCronJobs   map[uint]cron.EntryID
 	syncCronJobsMu sync.Mutex
@@ -297,14 +298,29 @@ func NewAdminAPI(collector *metrics.Collector, cfg *config.Config, db *gorm.DB) 
 		jwtSecret = envSecret
 	}
 
+	// 安全加固：禁止使用内置默认凭据/密钥。缺失时必须显式配置，否则拒绝启动，
+	// 防止攻击者利用公开仓库中的默认值直接登录或伪造 JWT。
 	if authUser == "" {
-		authUser = "admin"
+		log.Fatalf("[Auth] 未配置管理员用户名：请设置环境变量 PROMAI_AUTH_USERNAME 或配置文件 auth.username")
 	}
-	if authPass == "" {
-		authPass = "admin"
+	if authPass == "" || authPass == "admin" || authPass == "promai2024" {
+		log.Fatalf("[Auth] 未配置管理员密码或仍在用默认密码：请设置环境变量 PROMAI_AUTH_PASSWORD 或配置文件 auth.password")
 	}
-	if jwtSecret == "" {
-		jwtSecret = "promai-default-secret"
+	if jwtSecret == "" || jwtSecret == "promai-default-secret" || jwtSecret == "promai-jwt-secret-change-in-production" {
+		log.Fatalf("[Auth] 未配置 JWT 签名密钥或仍在用默认密钥：请设置环境变量 PROMAI_JWT_SECRET（至少 32 位随机字符串）")
+	}
+	if len(jwtSecret) < 32 {
+		log.Fatalf("[Auth] JWT 签名密钥过短（%d 字符），请使用至少 32 位的随机字符串", len(jwtSecret))
+	}
+
+	// JWT 有效期：默认 12 小时，可通过 PROMAI_JWT_TTL（小时数）调整
+	jwtTTL := 12 * time.Hour
+	if v := os.Getenv("PROMAI_JWT_TTL"); v != "" {
+		if hours, err := strconv.Atoi(v); err == nil && hours > 0 {
+			jwtTTL = time.Duration(hours) * time.Hour
+		} else {
+			log.Printf("[Auth] PROMAI_JWT_TTL 无效（%q），使用默认 12 小时", v)
+		}
 	}
 
 	return &AdminAPI{
@@ -313,6 +329,7 @@ func NewAdminAPI(collector *metrics.Collector, cfg *config.Config, db *gorm.DB) 
 		authUser:     authUser,
 		authPass:     authPass,
 		jwtSecret:    jwtSecret,
+		jwtTTL:       jwtTTL,
 		db:           db,
 		syncCronJobs: make(map[uint]cron.EntryID),
 	}
@@ -429,18 +446,37 @@ func (a *AdminAPI) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // ===== 登录防爆破 =====
-// 按客户端 IP 维度统计登录失败次数，超过阈值后锁定一段时间，防止暴力破解。
+// 按「客户端 IP + 用户名」双维度统计登录失败次数，超过阈值后锁定一段时间。
+// 阈值/锁定分钟可通过 PROMAI_LOGIN_MAX_FAILS / PROMAI_LOGIN_LOCK_MINUTES 环境变量调整。
 type loginFailInfo struct {
 	count       int
 	lockedUntil time.Time
 }
 
 var (
-	loginFailMu      sync.Mutex
-	loginFailures    = make(map[string]*loginFailInfo) // key: 客户端IP
-	loginMaxFails    = 5                               // 连续失败次数上限
-	loginLockMinutes = 5                               // 锁定分钟数
+	loginFailMu   sync.Mutex
+	loginFailures = make(map[string]*loginFailInfo) // key: "ip|username"
 )
+
+func loginMaxFailsLimit() int {
+	if v := os.Getenv("PROMAI_LOGIN_MAX_FAILS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 5
+}
+
+func loginLockMinutesLimit() int {
+	if v := os.Getenv("PROMAI_LOGIN_LOCK_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 5
+}
+
+func loginKey(ip, username string) string { return ip + "|" + username }
 
 // clientIP 提取客户端 IP（去除端口）
 func clientIP(r *http.Request) string {
@@ -452,42 +488,57 @@ func clientIP(r *http.Request) string {
 }
 
 // loginLocked 返回是否被锁定及剩余等待时间
-func loginLocked(ip string) (bool, time.Duration) {
+func loginLocked(ip, username string) (bool, time.Duration) {
+	key := loginKey(ip, username)
 	loginFailMu.Lock()
 	defer loginFailMu.Unlock()
-	info, ok := loginFailures[ip]
-	if !ok || info.count < loginMaxFails {
+	info, ok := loginFailures[key]
+	maxFails := loginMaxFailsLimit()
+	if !ok || info.count < maxFails {
 		return false, 0
 	}
 	if time.Now().Before(info.lockedUntil) {
 		return true, time.Until(info.lockedUntil)
 	}
 	// 锁定到期自动解除
-	delete(loginFailures, ip)
+	delete(loginFailures, key)
 	return false, 0
 }
 
 // recordLoginFail 记录一次登录失败，达到阈值则触发锁定
-func recordLoginFail(ip string) {
+func recordLoginFail(ip, username string) {
+	key := loginKey(ip, username)
 	loginFailMu.Lock()
 	defer loginFailMu.Unlock()
-	info := loginFailures[ip]
+	maxFails := loginMaxFailsLimit()
+	lockMin := loginLockMinutesLimit()
+	info := loginFailures[key]
 	if info == nil {
 		info = &loginFailInfo{}
-		loginFailures[ip] = info
+		loginFailures[key] = info
 	}
 	info.count++
-	if info.count >= loginMaxFails {
-		info.lockedUntil = time.Now().Add(time.Duration(loginLockMinutes) * time.Minute)
-		log.Printf("[Auth] IP %s 连续 %d 次登录失败，已锁定 %d 分钟", ip, info.count, loginLockMinutes)
+	if info.count >= maxFails {
+		info.lockedUntil = time.Now().Add(time.Duration(lockMin) * time.Minute)
+		auditLog("login_locked", fmt.Sprintf("IP=%s 用户=%s 连续 %d 次登录失败，锁定 %d 分钟", ip, username, info.count, lockMin))
 	}
 }
 
 // clearLoginFail 登录成功后清零失败记录
-func clearLoginFail(ip string) {
+func clearLoginFail(ip, username string) {
 	loginFailMu.Lock()
 	defer loginFailMu.Unlock()
-	delete(loginFailures, ip)
+	delete(loginFailures, loginKey(ip, username))
+}
+
+// auditLog 记录敏感操作审计日志（输出到标准日志 + audit.log 文件）
+func auditLog(action, detail string) {
+	line := fmt.Sprintf("%s [AUDIT] %s %s", time.Now().Format("2006-01-02 15:04:05"), action, detail)
+	log.Printf("%s", line)
+	if f, err := os.OpenFile("audit.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err == nil {
+		f.WriteString(line + "\n")
+		f.Close()
+	}
 }
 
 // handleLogin 处理登录请求
@@ -497,11 +548,6 @@ func (a *AdminAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := clientIP(r)
-	if locked, wait := loginLocked(ip); locked {
-		log.Printf("[Auth] 拒绝已锁定 IP 的登录尝试: %s", ip)
-		writeError(w, 429, fmt.Sprintf("登录尝试次数过多，请 %s 后再试", wait.Round(time.Second)))
-		return
-	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -514,14 +560,20 @@ func (a *AdminAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "用户名和密码不能为空")
 		return
 	}
+	if locked, wait := loginLocked(ip, req.Username); locked {
+		log.Printf("[Auth] 拒绝已锁定的登录尝试: IP=%s 用户=%s", ip, req.Username)
+		writeError(w, 429, fmt.Sprintf("登录尝试次数过多，请 %s 后再试", wait.Round(time.Second)))
+		return
+	}
 	if req.Username != a.authUser || req.Password != a.authPass {
 		log.Printf("[Auth] 登录失败: %s (密码错误)", req.Username)
-		recordLoginFail(ip)
+		recordLoginFail(ip, req.Username)
 		writeError(w, 401, "用户名或密码错误")
 		return
 	}
-	clearLoginFail(ip)
-	token, err := generateToken(req.Username, a.jwtSecret)
+	clearLoginFail(ip, req.Username)
+	auditLog("login_success", fmt.Sprintf("用户=%s IP=%s", req.Username, ip))
+	token, err := generateToken(req.Username, a.jwtSecret, a.jwtTTL)
 	if err != nil {
 		log.Printf("[Auth] 生成令牌失败: %v", err)
 		writeError(w, 500, "生成令牌失败")
@@ -684,6 +736,7 @@ func (a *AdminAPI) handleDataSources(w http.ResponseWriter, r *http.Request) {
 		d.TemplateID = database.PrimaryTemplateID(d.TemplateIDs)
 		database.DB.Create(&d)
 		invalidateDSCache()
+		auditLog("datasource_create", fmt.Sprintf("id=%d name=%s url=%s", d.ID, d.Name, d.URL))
 		log.Printf("[Admin] 创建数据源: id=%d name=%s url=%s", d.ID, d.Name, d.URL)
 		w.WriteHeader(201)
 		d.Password = ""
@@ -712,9 +765,11 @@ func (a *AdminAPI) handleDataSources(w http.ResponseWriter, r *http.Request) {
 		switch req.Action {
 		case "delete":
 			database.DB.Delete(&database.DataSource{}, req.IDs)
+			auditLog("datasource_delete", fmt.Sprintf("ids=%v", req.IDs))
 		case "toggle":
 			if req.Enabled != nil {
 				database.DB.Model(&database.DataSource{}).Where("id IN ?", req.IDs).Update("enabled", *req.Enabled)
+				auditLog("datasource_toggle", fmt.Sprintf("ids=%v enabled=%v", req.IDs, *req.Enabled))
 				log.Printf("[Admin] 数据源 %v 启用状态 -> %v", req.IDs, *req.Enabled)
 			}
 		case "set-template":
@@ -752,10 +807,11 @@ func (a *AdminAPI) handleDataSources(w http.ResponseWriter, r *http.Request) {
 				updates["username"] = req.Username
 			}
 			if req.Password != "" {
-				updates["password"] = req.Password
+				updates["password"] = encryptSecret(req.Password) // Updates(map) 不触发 hook，手动加密
 			}
 			if len(updates) > 0 {
 				database.DB.Model(&database.DataSource{}).Where("id IN ?", req.IDs).Updates(updates)
+				auditLog("datasource_set_creds", fmt.Sprintf("ids=%v 更新凭据", req.IDs))
 			}
 		default:
 			writeError(w, 400, "不支持的操作")
@@ -1030,6 +1086,7 @@ func (a *AdminAPI) handleNotifications(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		database.DB.Create(&n)
+		auditLog("notification_create", fmt.Sprintf("id=%d type=%s name=%s", n.ID, n.ChannelType, n.Name))
 		w.WriteHeader(201)
 		writeJSON(w, n)
 	default:
@@ -1091,11 +1148,14 @@ func (a *AdminAPI) handleNotificationByID(w http.ResponseWriter, r *http.Request
 			if ctVal, ok := bodyFields["channel_type"].(string); ok && ctVal != "" {
 				ct = ctVal
 			}
-			updates["config_json"] = restoreSensitiveFields(ct, n.ConfigJSON, rawJSON)
+			restored := restoreSensitiveFields(ct, n.ConfigJSON, rawJSON)
+			// Updates(map) 不触发 hook，手动加密敏感字段后落库
+			updates["config_json"] = database.EncryptNotifyConfigJSON(ct, restored)
 		}
 
 		if len(updates) > 0 {
 			database.DB.Model(&n).Updates(updates)
+			auditLog("notification_update", fmt.Sprintf("id=%d type=%s name=%s", id, n.ChannelType, n.Name))
 		}
 
 		database.DB.First(&n, id)
@@ -1103,6 +1163,7 @@ func (a *AdminAPI) handleNotificationByID(w http.ResponseWriter, r *http.Request
 		writeJSON(w, n)
 	case "DELETE":
 		database.DB.Delete(&database.NotificationChannel{}, id)
+		auditLog("notification_delete", fmt.Sprintf("id=%d", id))
 		w.WriteHeader(204)
 	default:
 		writeError(w, 405, "不支持的请求方法")
@@ -1292,6 +1353,7 @@ func (a *AdminAPI) handleReportByID(w http.ResponseWriter, r *http.Request) {
 		}
 		os.Remove(rec.FilePath)
 		database.DB.Delete(&database.ReportRecord{}, id)
+		auditLog("report_delete", fmt.Sprintf("id=%d title=%s", id, rec.Title))
 		w.WriteHeader(204)
 	default:
 		writeError(w, 405, "不支持的请求方法")
