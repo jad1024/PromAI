@@ -1325,19 +1325,33 @@ func doInspection(cfg *config.Config, collector *metrics.Collector, job database
 	var mu sync.Mutex
 	var anySuccess bool
 	var wg sync.WaitGroup
-	for _, dsID := range dsIDs {
-		wg.Add(1)
-		id := dsID
-		go func() {
-			defer wg.Done()
-			if doSingleInspection(cfg, collector, job, &id) {
-				mu.Lock()
-				anySuccess = true
-				mu.Unlock()
-			}
-		}()
+
+	// 大集群分批巡检：BatchSize>0 时按批并发，避免一次性全量并发打爆数据源/Prometheus
+	batchSize := job.BatchSize
+	if batchSize <= 0 {
+		batchSize = len(dsIDs)
 	}
-	wg.Wait()
+	for start := 0; start < len(dsIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(dsIDs) {
+			end = len(dsIDs)
+		}
+		batch := dsIDs[start:end]
+		log.Printf("[Cron] 任务 %s 巡检批次 %d/%d（%d 个数据源）", job.Name, start/batchSize+1, (len(dsIDs)+batchSize-1)/batchSize, len(batch))
+		for _, dsID := range batch {
+			wg.Add(1)
+			id := dsID
+			go func() {
+				defer wg.Done()
+				if doSingleInspection(cfg, collector, job, &id) {
+					mu.Lock()
+					anySuccess = true
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+	}
 
 	status := "success"
 	if !anySuccess {
@@ -1401,7 +1415,7 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 		invalidateDSCache()
 
 		database.NormalizeDataSourceTemplateFields(&ds)
-		activeCfg := buildRuntimeMetricConfig(cfg, &ds, nil)
+		activeCfg := buildRuntimeMetricConfig(cfg, &ds, loadJobMetricConfigs(job))
 
 		database.DB.Create(&database.InspectRecord{
 			TaskID: taskID, Status: "running", DatasourceID: &dsID,
@@ -1470,7 +1484,15 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 		DatasourceName: cfg.PrometheusURL, Message: "正在执行巡检...",
 		StartedAt: time.Now(),
 	})
-	data, err := collector.CollectMetrics()
+	// 应用定时任务指定的指标范围（未指定则为全部）
+	var data *report.ReportData
+	if scoped := loadJobMetricConfigs(job); scoped != nil {
+		scopedCfg := buildRuntimeMetricConfig(cfg, nil, scoped)
+		scopedCollector := metrics.NewCollectorWithURL(client.API, scopedCfg, cfg.PrometheusURL)
+		data, err = scopedCollector.CollectMetrics()
+	} else {
+		data, err = collector.CollectMetrics()
+	}
 	if err != nil {
 		log.Printf("[Cron] 收集指标失败: %v", err)
 		database.DB.Model(&database.InspectRecord{}).Where("task_id = ?", taskID).Updates(map[string]interface{}{
@@ -1519,6 +1541,33 @@ func resolveJobDatasourceIDs(job database.CronJob) []uint {
 	if job.DatasourceID != nil {
 		return []uint{*job.DatasourceID}
 	}
+	return nil
+}
+
+// loadJobMetricConfigs 解析定时任务指定的巡检指标范围，返回 nil 表示巡检全部有效指标。
+// 优先级：MetricConfigIDs（具体指标）> MetricTypeIDs（指标分组）> 全部。
+func loadJobMetricConfigs(job database.CronJob) []database.MetricConfig {
+	var configs []database.MetricConfig
+
+	// 1) 指定了具体指标 ID
+	if job.MetricConfigIDs != "" {
+		var ids []uint
+		if err := json.Unmarshal([]byte(job.MetricConfigIDs), &ids); err == nil && len(ids) > 0 {
+			database.DB.Where("id IN ?", ids).Order("metric_type_id asc, sort_order asc, id asc").Find(&configs)
+			return configs
+		}
+	}
+
+	// 2) 指定了指标分组 ID
+	if job.MetricTypeIDs != "" {
+		var ids []uint
+		if err := json.Unmarshal([]byte(job.MetricTypeIDs), &ids); err == nil && len(ids) > 0 {
+			database.DB.Where("metric_type_id IN ?", ids).Order("metric_type_id asc, sort_order asc, id asc").Find(&configs)
+			return configs
+		}
+	}
+
+	// 3) 未指定：返回 nil，交由 buildRuntimeMetricConfig 按数据源加载全部有效指标
 	return nil
 }
 

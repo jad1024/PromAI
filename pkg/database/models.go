@@ -160,6 +160,11 @@ type CronJob struct {
 	AllDatasources bool   `json:"all_datasources"`                 // 全部数据源
 	Enabled        bool   `gorm:"default:true" json:"enabled"`
 	NotifyChannels string `gorm:"type:text" json:"notify_channels"`
+	// 巡检指标范围：按指标分组(MetricType)或具体指标(MetricConfig)指定；均为空表示巡检该数据源的全部有效指标
+	MetricTypeIDs   string `gorm:"type:text" json:"metric_type_ids"`   // 指标分组 ID JSON 数组，如 [1,2]
+	MetricConfigIDs string `gorm:"type:text" json:"metric_config_ids"` // 具体指标 ID JSON 数组，如 [3,4]
+	// 大集群分批巡检：每批并发巡检的数据源数量，0 表示不限（一次全量并发）
+	BatchSize int `json:"batch_size"`
 	// AI 巡检分析：巡检完成后调用 AI 对结果做健康分析，并推送到飞书通道
 	AiAnalysisEnabled bool       `json:"ai_analysis_enabled"`                 // 是否启用 AI 巡检分析
 	AiAnalysisPrompt  string     `gorm:"type:text" json:"ai_analysis_prompt"` // 自定义 AI 分析提示词（可选，空则使用内置模板）

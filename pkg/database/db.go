@@ -87,18 +87,36 @@ func SeedFromConfig(cfg *config.Config) error {
 	return nil
 }
 
+// metricTypesSeedFile 默认指标目录种子文件（安全加固后指标目录从 config.yaml 迁移到此 SQL 文件）
+var metricTypesSeedFile = "deploy/sql/metric_types_seed.sql"
+
 func ImportSQLFileIfNeeded(cfg *config.Config) error {
-	if strings.ToLower(strings.TrimSpace(os.Getenv("PROMAI_IMPORT_SQL_ON_START"))) != "true" {
-		return nil
-	}
+	// config.yaml 已内联配置 metric_types 时，以配置文件为准，跳过 SQL 初始化
 	if cfg != nil && len(cfg.MetricTypes) > 0 {
 		log.Printf("config.yaml 已配置 metric_types，跳过 SQL 初始化")
 		return nil
 	}
 
-	sqlFile := strings.TrimSpace(os.Getenv("PROMAI_IMPORT_SQL_FILE"))
-	if sqlFile == "" {
+	// 数据库里已有指标目录时无需导入（幂等，避免重复建设）
+	var mtCount int64
+	if err := DB.Model(&MetricType{}).Count(&mtCount).Error; err == nil && mtCount > 0 {
 		return nil
+	}
+
+	// 决定要导入的 SQL 文件：显式指定 > 默认种子文件
+	sqlFile := strings.TrimSpace(os.Getenv("PROMAI_IMPORT_SQL_FILE"))
+	explicit := sqlFile != ""
+	if !explicit {
+		sqlFile = metricTypesSeedFile
+	}
+	// 显式 opt-in 开关：仅当用户明确要求时才强制导入；默认走“目录为空时自动导入种子文件”的兜底逻辑
+	forceImport := strings.ToLower(strings.TrimSpace(os.Getenv("PROMAI_IMPORT_SQL_ON_START"))) == "true"
+
+	if !explicit && !forceImport {
+		if _, err := os.Stat(sqlFile); err != nil {
+			log.Printf("指标目录为空且未找到默认种子文件 %s（可设置 PROMAI_IMPORT_SQL_FILE 指定），跳过 SQL 初始化", sqlFile)
+			return nil
+		}
 	}
 
 	content, err := os.ReadFile(sqlFile)
@@ -118,7 +136,7 @@ func ImportSQLFileIfNeeded(cfg *config.Config) error {
 	if err := DB.Exec(sqlText).Error; err != nil {
 		return fmt.Errorf("executing import sql file %s: %w", sqlFile, err)
 	}
-	log.Printf("SQL 初始化完成: %s", sqlFile)
+	log.Printf("SQL 指标目录初始化完成: %s", sqlFile)
 	return nil
 }
 

@@ -72,6 +72,11 @@ export interface CronJob {
   all_datasources?: boolean
   enabled?: boolean
   notify_channels?: string
+  // 巡检指标范围（按指标分组或具体指标指定；为空表示全部有效指标）
+  metric_type_ids?: string
+  metric_config_ids?: string
+  // 大集群分批巡检：每批并发数据源数，0 表示不限
+  batch_size?: number
   // AI 巡检分析：巡检完成后 AI 分析结果推送到飞书
   ai_analysis_enabled?: boolean
   ai_analysis_prompt?: string
