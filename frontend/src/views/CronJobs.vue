@@ -111,6 +111,10 @@
         <el-form-item v-if="form.ai_analysis_enabled" label="自定义提示词">
           <el-input v-model="form.ai_analysis_prompt" type="textarea" :rows="3" placeholder="可选。留空使用内置模板（健康总览 / 异常分析 / 处理建议 / 风险提示）" />
         </el-form-item>
+        <el-form-item v-if="form.ai_analysis_enabled" label="仅异常时分析">
+          <el-switch v-model="form.ai_only_abnormal" active-text="开启（省 token）" inactive-text="每次都分析" />
+          <div style="color: var(--text-tertiary); font-size: 12px; line-height: 1.4;">开启后：巡检存在 warning/critical 时才调用 AI 分析，结果正常时跳过 AI、按普通报告通知；手动「AI 分析」不受此限制</div>
+        </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -150,7 +154,7 @@ const notifChannelIds = ref<number[]>([])
 const selectedDSIds = ref<number[]>([])
 const selectedMetricTypeIds = ref<number[]>([])
 const aiAnalyzingId = ref<number | null>(null)
-const form = ref<CronJob>({ name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, batch_size: 0 })
+const form = ref<CronJob>({ name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, ai_only_abnormal: false, batch_size: 0 })
 const rules = {
   name: [{ required: true, message: '请输入任务名称', trigger: 'blur' }],
   schedule: [{ required: true, message: '请输入调度表达式', trigger: 'blur' }],
@@ -216,7 +220,7 @@ async function fetchData() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, ai_analysis_prompt: '', batch_size: 0 }
+  form.value = { name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, ai_analysis_prompt: '', ai_only_abnormal: false, batch_size: 0 }
   notifChannelIds.value = []
   selectedDSIds.value = []
   selectedMetricTypeIds.value = []
@@ -224,7 +228,7 @@ function openCreate() {
 }
 function openEdit(row: CronJob) {
   editingId.value = row.id!
-  form.value = { ...row, all_datasources: row.all_datasources ?? false, batch_size: row.batch_size ?? 0 }
+  form.value = { ...row, all_datasources: row.all_datasources ?? false, batch_size: row.batch_size ?? 0, ai_only_abnormal: row.ai_only_abnormal ?? false }
   try { notifChannelIds.value = row.notify_channels ? JSON.parse(row.notify_channels) : [] } catch { notifChannelIds.value = [] }
   try { selectedDSIds.value = row.datasource_ids ? JSON.parse(row.datasource_ids) : [] } catch { selectedDSIds.value = [] }
   try { selectedMetricTypeIds.value = row.metric_type_ids ? JSON.parse(row.metric_type_ids) : [] } catch { selectedMetricTypeIds.value = [] }

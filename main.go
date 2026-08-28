@@ -685,9 +685,22 @@ func sendJobNotifications(job database.CronJob, reportFilePath string, reportDat
 
 // sendInspectionNotifications 统一处理巡检完成后的通知：
 //   - 若任务开启 AI 分析，只推送 AI 分析卡片，不再发送普通巡检报告；
+//   - 若任务开启"仅异常时 AI 分析"且本次巡检无异常（无 critical/warning），跳过 AI 分析并回退为普通报告通知；
 //   - 否则只发送普通巡检报告，且优先使用 job 级通道，避免与全局配置重复推送。
 func sendInspectionNotifications(config *config.Config, job database.CronJob, reportFilePath string, reportData *report.ReportData) {
 	if job.AiAnalysisEnabled {
+		if job.AiOnlyAbnormal {
+			summary := notify.CalculateAlertSummary(*reportData)
+			if summary.TotalAlerts == 0 {
+				log.Printf("[PiAgent] 任务 %d 开启了仅异常时 AI 分析，本次巡检无异常，跳过 AI 分析", job.ID)
+				if job.NotifyChannels != "" {
+					sendJobNotifications(job, reportFilePath, reportData)
+				} else {
+					sendNotifications(config, reportFilePath, reportData)
+				}
+				return
+			}
+		}
 		runInspectionAIAnalysis(job, reportData, reportFilePath)
 		return
 	}

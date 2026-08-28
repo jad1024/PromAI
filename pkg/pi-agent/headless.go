@@ -166,21 +166,103 @@ func (h *AgentHandler) AnalyzeInspectionWithPrompt(ctx context.Context, data *re
 // AnalyzeAlertRootCause 对一条告警规则及其活跃实例做 AI 根因分析。
 // 适用于告警触发通知时附加分析结论。
 func (h *AgentHandler) AnalyzeAlertRootCause(ctx context.Context, rule *database.AlertRule, instances []database.AlertInstance) (*HeadlessResult, error) {
-	prompt := buildAlertRootCausePrompt(rule, instances)
+	prompt := h.buildAlertRootCausePrompt(rule, instances)
 	return h.RunHeadless(ctx, prompt, 0)
+}
+
+// crossClusterAlert 跨集群（数据源）关联告警摘要，作为根因分析上下文。
+type crossClusterAlert struct {
+	RuleName       string
+	DatasourceName string
+	Severity       string
+	Labels         string
+	Value          float64
+	ActiveAt       time.Time
+}
+
+// fetchCrossClusterAlerts 查询当前其他集群（数据源）近 30 分钟内活跃的告警，
+// 作为跨集群关联上下文。不同集群的告警可能同源（如共享依赖故障）也可能完全独立，
+// 是否关联交由 AI 结合时间/指标/标签判断，不做硬性分组。
+func (h *AgentHandler) fetchCrossClusterAlerts(instances []database.AlertInstance) []crossClusterAlert {
+	if h.db == nil || len(instances) == 0 {
+		return nil
+	}
+	dsIDs := make([]uint, 0, len(instances))
+	seen := map[uint]bool{}
+	for _, inst := range instances {
+		if !seen[inst.DatasourceID] {
+			seen[inst.DatasourceID] = true
+			dsIDs = append(dsIDs, inst.DatasourceID)
+		}
+	}
+	cutoff := time.Now().Add(-30 * time.Minute)
+	var raw []database.AlertInstance
+	if err := h.db.Where("state IN ? AND datasource_id NOT IN ? AND last_eval_at > ?",
+		[]string{"pending", "firing"}, dsIDs, cutoff).
+		Order("active_at DESC").Limit(10).Find(&raw).Error; err != nil || len(raw) == 0 {
+		return nil
+	}
+
+	ruleIDs := make([]uint, 0, len(raw))
+	allDsIDs := make([]uint, 0, len(raw))
+	seenDs := map[uint]bool{}
+	for _, r := range raw {
+		ruleIDs = append(ruleIDs, r.RuleID)
+		if !seenDs[r.DatasourceID] {
+			seenDs[r.DatasourceID] = true
+			allDsIDs = append(allDsIDs, r.DatasourceID)
+		}
+	}
+	ruleNames := map[uint]string{}
+	var rules []database.AlertRule
+	if err := h.db.Select("id, name").Where("id IN ?", ruleIDs).Find(&rules).Error; err == nil {
+		for _, r := range rules {
+			ruleNames[r.ID] = r.Name
+		}
+	}
+	dsNames := map[uint]string{}
+	var dss []database.DataSource
+	if err := h.db.Select("id, name").Where("id IN ?", allDsIDs).Find(&dss).Error; err == nil {
+		for _, d := range dss {
+			dsNames[d.ID] = d.Name
+		}
+	}
+
+	related := make([]crossClusterAlert, 0, len(raw))
+	for _, r := range raw {
+		labels := r.LabelsJSON
+		if len(labels) > 160 {
+			labels = labels[:160] + "..."
+		}
+		related = append(related, crossClusterAlert{
+			RuleName:       ruleNames[r.RuleID],
+			DatasourceName: dsNames[r.DatasourceID],
+			Severity:       r.Severity,
+			Labels:         labels,
+			Value:          r.Value,
+			ActiveAt:       r.ActiveAt,
+		})
+	}
+	return related
+}
+
+// buildAlertRootCausePrompt 组装带跨集群关联上下文的告警根因分析 Prompt。
+func (h *AgentHandler) buildAlertRootCausePrompt(rule *database.AlertRule, instances []database.AlertInstance) string {
+	return buildAlertRootCausePrompt(rule, instances, h.fetchCrossClusterAlerts(instances))
 }
 
 // AnalyzeAlertAndRecord 分析告警根因并持久化分析记录（AiAnalysisRecord）。
 // 失败时不阻断调用方：返回的部分结果中 Error 非空。
 func (h *AgentHandler) AnalyzeAlertAndRecord(ctx context.Context, rule *database.AlertRule, instances []database.AlertInstance, refID string) (*HeadlessResult, error) {
-	res, err := h.AnalyzeAlertRootCause(ctx, rule, instances)
+	prompt := h.buildAlertRootCausePrompt(rule, instances)
+	res, err := h.RunHeadless(ctx, prompt, 0)
 	if h.db != nil {
 		rec := database.AiAnalysisRecord{
 			Type:       "alert",
 			RefID:      refID,
 			RuleID:     rule.ID,
 			ModelName:  res.ModelName,
-			Prompt:     buildAlertRootCausePrompt(rule, instances),
+			Prompt:     prompt,
 			Result:     res.Text,
 			Status:     "success",
 			DurationMs: res.Duration.Milliseconds(),
@@ -475,8 +557,9 @@ func durationHuman(d time.Duration) string {
 	return fmt.Sprintf("%dh", h)
 }
 
-// buildAlertRootCausePrompt 构造告警根因分析 Prompt
-func buildAlertRootCausePrompt(rule *database.AlertRule, instances []database.AlertInstance) string {
+// buildAlertRootCausePrompt 构造告警根因分析 Prompt。
+// related 为其他集群（数据源）当前活跃告警，用于跨集群关联判断（可为空）。
+func buildAlertRootCausePrompt(rule *database.AlertRule, instances []database.AlertInstance, related []crossClusterAlert) string {
 	var b strings.Builder
 	b.WriteString("你是 PromAI 的告警根因分析专家。以下是一条正在触发的告警，请基于告警上下文并结合工具查询到的实时数据，分析其根因。\n\n")
 	b.WriteString("## 告警上下文\n")
@@ -521,14 +604,28 @@ func buildAlertRootCausePrompt(rule *database.AlertRule, instances []database.Al
 		}
 	}
 
+	if len(related) > 0 {
+		b.WriteString("\n## 其他集群当前活跃告警（近30分钟）\n")
+		b.WriteString("以下为其他数据源/集群当前活跃的告警，可能与本告警同源（如共享依赖、网络、上游服务故障），也可能完全无关。请结合时间、指标类型、标签综合判断关联性：\n")
+		for _, r := range related {
+			active := ""
+			if !r.ActiveAt.IsZero() {
+				active = r.ActiveAt.Format("01-02 15:04")
+			}
+			b.WriteString(fmt.Sprintf("- [%s][%s] 规则: %s，值: %.2f，触发: %s，标签: %s\n",
+				r.DatasourceName, r.Severity, r.RuleName, r.Value, active, r.Labels))
+		}
+	}
+
 	b.WriteString(`
 ## 输出要求
 请用 Markdown 输出，控制在 500 字以内：
 1. 🔴 结论：最可能的根因（一句话）
 2. 🔍 推理过程：依据哪些指标/数据得出该结论
 3. 📈 关联证据：列出工具查询到的关键数据（CPU/内存/磁盘、历史巡检等）
-4. 🛠️ 处置建议：立即措施 + 长期优化
-5. ⏰ 观察点：恢复后应关注什么
+4. 🔗 跨集群关联：若提供了"其他集群当前活跃告警"，判断与本告警是否同源——关联则指出共同根因，无关则一句话说明本告警为独立事件
+5. 🛠️ 处置建议：立即措施 + 长期优化
+6. ⏰ 观察点：恢复后应关注什么
 
 你可以调用 analyze_alert / query_metrics / list_reports 等工具获取关联指标、历史巡检记录等实时数据来辅助判断。`)
 	return b.String()

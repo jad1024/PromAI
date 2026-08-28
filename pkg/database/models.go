@@ -168,6 +168,7 @@ type CronJob struct {
 	// AI 巡检分析：巡检完成后调用 AI 对结果做健康分析，并推送到飞书通道
 	AiAnalysisEnabled bool       `json:"ai_analysis_enabled"`                 // 是否启用 AI 巡检分析
 	AiAnalysisPrompt  string     `gorm:"type:text" json:"ai_analysis_prompt"` // 自定义 AI 分析提示词（可选，空则使用内置模板）
+	AiOnlyAbnormal    bool       `json:"ai_only_abnormal"`                    // 仅当巡检存在异常（critical/warning）时才调用 AI 分析，正常时跳过以节省 token
 	LastRunAt         *time.Time `json:"last_run_at"`
 	LastStatus        string     `gorm:"size:50" json:"last_status"`
 	CreatedAt         time.Time  `json:"created_at"`

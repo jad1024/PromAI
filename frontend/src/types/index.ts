@@ -80,6 +80,8 @@ export interface CronJob {
   // AI 巡检分析：巡检完成后 AI 分析结果推送到飞书
   ai_analysis_enabled?: boolean
   ai_analysis_prompt?: string
+  // 仅当巡检存在异常时才调用 AI 分析，正常时跳过以节省 token
+  ai_only_abnormal?: boolean
   last_run_at?: string | null
   last_status?: string
   created_at?: string
