@@ -9,6 +9,10 @@
       <div class="section-header">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><List /></el-icon> 指标列表</h3>
         <div class="action-bar">
+          <el-input v-model="searchKeyword" placeholder="搜索名称 / PromQL" clearable style="width: 200px;" @keyup.enter="noop" @clear="noop" />
+          <el-select v-model="filterType" placeholder="全部类型" clearable filterable style="width: 160px;">
+            <el-option v-for="mt in metricTypes" :key="mt.id" :label="mt.type_name" :value="mt.id" />
+          </el-select>
           <el-select v-model="filterDS" placeholder="全部数据源" clearable filterable style="width: 160px;" @change="fetchData">
             <el-option label="全局指标" :value="0" />
             <el-option v-for="ds in datasources" :key="ds.id" :label="ds.name" :value="ds.id" />
@@ -20,13 +24,16 @@
           </el-button>
         </div>
       </div>
-      <el-table :data="flatMetrics" v-loading="loading" stripe size="default">
+      <el-table :data="displayMetrics" v-loading="loading" stripe size="default">
         <el-table-column type="index" label="#" width="50" />
-        <el-table-column label="类型" width="200">
+        <el-table-column label="类型" width="190">
           <template #default="{ row }">
-            <el-tag size="small" style="background: rgba(99,102,241,0.12); color: #818cf8; border: none;">
-              {{ row.type_name }}
-            </el-tag>
+            <el-tooltip :disabled="!row.type_description" :content="row.type_description" placement="top">
+              <span class="type-chip" :style="{ color: row.type_color || 'var(--text-secondary)' }">
+                <span class="type-dot" :style="{ background: row.type_color || 'var(--cyan)' }"></span>
+                <span class="cell-ellipsis">{{ row.type_name }}</span>
+              </span>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column prop="name" label="指标名称" min-width="160">
@@ -76,7 +83,7 @@
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-if="!loading && flatMetrics.length === 0" description="暂无指标配置" :image-size="60" />
+      <el-empty v-if="!loading && displayMetrics.length === 0" description="暂无匹配的指标配置" :image-size="60" />
     </div>
 
     <el-dialog v-model="configDialog" :title="editingConfigId ? '编辑指标' : '新增指标'" width="720" :close-on-click-modal="false" top="3vh">
@@ -232,7 +239,17 @@
         </div>
         <el-table :data="metricTypes" stripe size="small">
           <el-table-column type="index" label="#" width="50" />
-          <el-table-column prop="type_name" label="类型名称" min-width="200" />
+          <el-table-column label="类型名称" min-width="200">
+            <template #default="{ row }">
+              <div style="display: flex; flex-direction: column; gap: 2px;">
+                <span class="type-chip" :style="{ color: row.color || 'var(--text-primary)' }">
+                  <span class="type-dot" :style="{ background: row.color || 'var(--cyan)' }"></span>
+                  <span class="cell-ellipsis">{{ row.type_name }}</span>
+                </span>
+                <span v-if="row.description" class="cell-ellipsis" style="font-size: 12px; color: var(--text-tertiary);">{{ row.description }}</span>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column label="指标数" width="100" align="center">
             <template #default="{ row }">
               <span style="color: var(--cyan);">{{ (row.configs || []).length }}</span>
@@ -249,10 +266,17 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="typeFormDialog" :title="editingTypeId ? '编辑类型' : '新建类型'" width="400" :close-on-click-modal="false">
+    <el-dialog v-model="typeFormDialog" :title="editingTypeId ? '编辑类型' : '新建类型'" width="460" :close-on-click-modal="false">
       <el-form ref="typeFormRef" :model="typeForm" :rules="typeRules" label-width="80px">
         <el-form-item label="类型名称" prop="type_name">
           <el-input v-model="typeForm.type_name" placeholder="例如：L8-应用层：自定义业务监控" />
+        </el-form-item>
+        <el-form-item label="标识色">
+          <el-color-picker v-model="typeForm.color" />
+          <span style="margin-left: 10px; font-size: 12px; color: var(--text-tertiary);">用于列表中的类型标签颜色</span>
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="typeForm.description" type="textarea" :rows="2" placeholder="可选，鼠标悬停类型标签时显示" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -266,10 +290,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { getMetricTypes, createMetricConfig, updateMetricConfig, deleteMetricConfig, getAllDataSources, validatePromQL, createMetricType, updateMetricType, deleteMetricType } from '../api'
+import { getMetricTypes, createMetricConfig, updateMetricConfig, deleteMetricConfig, getAllDataSources, validatePromQL, createMetricType, updateMetricType, deleteMetricType, getMetricConfigRefs, getMetricTypeRefs } from '../api'
 import type { MetricType, MetricConfig, DataSource } from '../types'
 
 function getCssVar(name: string): string {
@@ -278,6 +302,8 @@ function getCssVar(name: string): string {
 
 interface FlatMetric extends MetricConfig {
   type_name: string
+  type_color?: string
+  type_description?: string
 }
 
 const loading = ref(false)
@@ -287,6 +313,23 @@ const datasources = ref<DataSource[]>([])
 const metricTypes = ref<MetricType[]>([])
 const flatMetrics = ref<FlatMetric[]>([])
 const filterDS = ref<number | ''>('')
+const filterType = ref<number | ''>('')
+const searchKeyword = ref('')
+
+// 客户端过滤：类型 + 名称/PromQL 关键字
+const displayMetrics = computed(() => {
+  let list = flatMetrics.value
+  if (filterType.value !== '') {
+    list = list.filter(m => m.metric_type_id === Number(filterType.value))
+  }
+  const kw = searchKeyword.value.trim().toLowerCase()
+  if (kw) {
+    list = list.filter(m => m.name.toLowerCase().includes(kw) || (m.query || '').toLowerCase().includes(kw))
+  }
+  return list
+})
+
+function noop() { /* 搜索/清除仅触发本地过滤 */ }
 
 const configDialog = ref(false)
 const editingConfigId = ref<number | null>(null)
@@ -349,7 +392,7 @@ async function fetchData() {
     const flat: FlatMetric[] = []
     for (const mt of metricTypes.value) {
       for (const cfg of mt.configs || []) {
-        flat.push({ ...cfg, type_name: mt.type_name })
+        flat.push({ ...cfg, type_name: mt.type_name, type_color: mt.color, type_description: mt.description })
       }
     }
     flatMetrics.value = flat
@@ -406,7 +449,15 @@ async function handleSaveConfig() {
 
 async function handleDeleteConfig(row: FlatMetric) {
   try {
-    await ElMessageBox.confirm(`确定删除指标「${row.name}」？`, '确认删除', { type: 'warning', cancelButtonText: '取消', confirmButtonText: '删除' })
+    let extra = ''
+    try {
+      const refs = (await getMetricConfigRefs(row.id!)).data
+      if (refs.template_count > 0) {
+        const names = refs.templates.map(t => t.name).join('、')
+        extra = `\n\n该指标正被 ${refs.template_count} 个巡检模板引用（${names}），删除后将从这些模板中移除。`
+      }
+    } catch { /* 引用计数失败不影响删除流程 */ }
+    await ElMessageBox.confirm(`确定删除指标「${row.name}」？${extra}`, '确认删除', { type: 'warning', cancelButtonText: '取消', confirmButtonText: '删除' })
     await deleteMetricConfig(row.id!)
     ElMessage.success('删除成功')
     await fetchData()
@@ -435,19 +486,19 @@ const typeLoading = ref(false)
 const typeFormDialog = ref(false)
 const editingTypeId = ref<number | null>(null)
 const typeFormRef = ref<FormInstance>()
-const typeForm = ref({ type_name: '' })
+const typeForm = ref({ type_name: '', description: '', color: '' })
 const typeRules = { type_name: [{ required: true, message: '请输入类型名称', trigger: 'blur' }] }
 const savingType = ref(false)
 
 function openCreateType() {
   editingTypeId.value = null
-  typeForm.value = { type_name: '' }
+  typeForm.value = { type_name: '', description: '', color: '' }
   typeFormDialog.value = true
 }
 
 function openEditType(row: any) {
   editingTypeId.value = row.id
-  typeForm.value = { type_name: row.type_name }
+  typeForm.value = { type_name: row.type_name, description: row.description || '', color: row.color || '' }
   typeFormDialog.value = true
 }
 
@@ -472,7 +523,15 @@ async function handleSaveType() {
 
 async function handleDeleteType(row: any) {
   try {
-    await ElMessageBox.confirm(`确定删除类型「${row.type_name}」？其下的所有指标将一并删除。`, '确认删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+    let extra = ''
+    try {
+      const refs = (await getMetricTypeRefs(row.id)).data
+      const parts: string[] = []
+      if (refs.config_count > 0) parts.push(`其下 ${refs.config_count} 个指标`)
+      if (refs.template_count > 0) parts.push(`被 ${refs.template_count} 个模板引用`)
+      if (parts.length) extra = `\n\n${parts.join('，')}，删除后将一并移除。`
+    } catch { /* 引用计数失败不影响删除流程 */ }
+    await ElMessageBox.confirm(`确定删除类型「${row.type_name}」？${extra}`, '确认删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
     await deleteMetricType(row.id)
     ElMessage.success('删除成功')
     await fetchData()
@@ -483,6 +542,19 @@ onMounted(fetchData)
 </script>
 
 <style scoped>
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  max-width: 100%;
+}
+.type-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
 .validation-panel {
   margin: 4px 0 12px 24px;
   padding: 10px 14px;

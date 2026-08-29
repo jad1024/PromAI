@@ -44,12 +44,14 @@ func (d *DataSource) AfterFind(*gorm.DB) error {
 }
 
 type MetricType struct {
-	ID        uint           `gorm:"primaryKey" json:"id"`
-	TypeName  string         `gorm:"uniqueIndex;size:200;not null" json:"type_name"`
-	SortOrder int            `gorm:"default:0" json:"sort_order"`
-	Configs   []MetricConfig `gorm:"foreignKey:MetricTypeID" json:"configs"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID          uint           `gorm:"primaryKey" json:"id"`
+	TypeName    string         `gorm:"uniqueIndex;size:200;not null" json:"type_name"`
+	SortOrder   int            `gorm:"default:0" json:"sort_order"`
+	Description string         `gorm:"size:500" json:"description"` // 类型说明（鼠标悬停）
+	Color       string         `gorm:"size:20" json:"color"`        // 标识色，如 #818cf8（用于类型标签/导航）
+	Configs     []MetricConfig `gorm:"foreignKey:MetricTypeID" json:"configs"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
 type MetricConfig struct {
@@ -203,6 +205,7 @@ type InspectionTemplate struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	Name        string    `gorm:"size:200;not null" json:"name"`
 	Description string    `gorm:"size:500" json:"description"`
+	Category    string    `gorm:"size:100;index" json:"category"` // 模板族分类，如 基础设施 / 数据库 / 中间件 / 自定义
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

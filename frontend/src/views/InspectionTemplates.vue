@@ -8,8 +8,16 @@
     <div class="section-card">
       <div class="section-header">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><List /></el-icon> 模板列表</h3>
-        <div style="display: flex; gap: 8px; align-items: center;">
+        <div class="action-bar">
           <el-input v-model="keyword" placeholder="搜索模板名称" clearable style="width: 200px;" @keyup.enter="fetchData" @clear="fetchData" />
+          <el-select v-model="filterCategory" placeholder="全部分类" clearable style="width: 140px;" @change="fetchData">
+            <el-option v-for="c in categoryPresets" :key="c.value" :label="c.label" :value="c.value" />
+          </el-select>
+          <el-select v-model="sortKey" style="width: 150px;" @change="fetchData">
+            <el-option label="最新创建" value="created_at" />
+            <el-option label="指标数 ↓" value="metric_count" />
+            <el-option label="名称 A-Z" value="name" />
+          </el-select>
           <el-button plain :loading="initing" @click="handleInitTemplates">初始化模板</el-button>
           <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon> 新建模板</el-button>
         </div>
@@ -21,9 +29,15 @@
             <span style="font-weight: 600; color: var(--text-primary);">{{ row.name }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="description" label="描述" min-width="260">
+        <el-table-column prop="description" label="描述" min-width="220">
           <template #default="{ row }">
-            <span style="color: var(--text-tertiary);">{{ row.description || '-' }}</span>
+            <span class="cell-ellipsis" :title="row.description || ''" style="color: var(--text-tertiary);">{{ row.description || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="分类" width="110">
+          <template #default="{ row }">
+            <el-tag v-if="row.category" size="small" style="background: rgba(0,212,255,0.1); color: var(--cyan); border: none;">{{ row.category }}</el-tag>
+            <span v-else style="color: var(--text-tertiary); font-size: 12px;">未分类</span>
           </template>
         </el-table-column>
         <el-table-column label="指标数" width="90" align="center">
@@ -34,21 +48,14 @@
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ dayjs(row.created_at).format('YYYY-MM-DD HH:mm') }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="340" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" text @click="viewMetrics(row)" style="color: var(--text-secondary);">查看指标</el-button>
-            <el-button size="small" text @click="editMetrics(row)" style="color: var(--cyan);">配置指标</el-button>
-            <el-dropdown trigger="click" @command="(cmd: string) => handleMore(row, cmd)">
-              <el-button size="small" text style="color: var(--text-tertiary);">
-                更多<el-icon><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="edit">编辑信息</el-dropdown-item>
-                  <el-dropdown-item command="delete" style="color: var(--red);">删除</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            <div class="row-actions">
+              <el-tooltip content="查看指标" placement="top"><el-button size="small" text @click="viewMetrics(row)" style="color: var(--text-secondary);"><el-icon><View /></el-icon></el-button></el-tooltip>
+              <el-tooltip content="配置指标" placement="top"><el-button size="small" text @click="editMetrics(row)" style="color: var(--cyan);"><el-icon><Setting /></el-icon></el-button></el-tooltip>
+              <el-tooltip content="编辑信息" placement="top"><el-button size="small" text @click="openEdit(row)" style="color: var(--text-secondary);"><el-icon><Edit /></el-icon></el-button></el-tooltip>
+              <el-tooltip content="删除" placement="top"><el-button size="small" text @click="handleDelete(row)" style="color: var(--red);"><el-icon><Delete /></el-icon></el-button></el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -70,6 +77,11 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
         <el-form-item label="模板名称" prop="name">
           <el-input v-model="form.name" placeholder="例如：基础巡检模板" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="form.category" placeholder="选择或输入分类" allow-create filterable default-first-option clearable style="width: 100%;">
+            <el-option v-for="c in categoryPresets" :key="c.value" :label="c.label" :value="c.value" />
+          </el-select>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" placeholder="可选" type="textarea" :rows="2" />
@@ -245,7 +257,7 @@ import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { getTemplates, createTemplate, updateTemplate, deleteTemplate, getTemplate, getTemplateMetrics, setTemplateMetrics, getMetricTypes, saveTemplateMetricOverride, initTemplates } from '../api'
+import { getTemplates, createTemplate, updateTemplate, deleteTemplate, getTemplate, getTemplateMetrics, setTemplateMetrics, getMetricTypes, saveTemplateMetricOverride, initTemplates, getTemplateRefs } from '../api'
 import type { MetricType } from '../types'
 
 function getCssVar(name: string): string {
@@ -262,16 +274,29 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const keyword = ref('')
+const filterCategory = ref('')
+const sortKey = ref('created_at')
 const metricTypes = ref<MetricType[]>([])
 const selectedConfigIds = ref<number[]>([])
 const editingTemplate = ref<any>(null)
+
+// 模板族分类预设（表单与筛选共用；表单支持 allow-create 输入自定义分类）
+const categoryPresets = [
+  { label: '基础设施', value: '基础设施' },
+  { label: '数据库', value: '数据库' },
+  { label: '中间件', value: '中间件' },
+  { label: '应用', value: '应用' },
+  { label: '业务', value: '业务' },
+  { label: '自定义', value: '自定义' },
+  { label: '未分类', value: '__uncategorized__' },
+]
 
 const createDialog = ref(false)
 const metricsDialog = ref(false)
 const detailDialog = ref(false)
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
-const form = ref({ name: '', description: '' })
+const form = ref({ name: '', description: '', category: '' })
 const rules = { name: [{ required: true, message: '请输入模板名称', trigger: 'blur' }] }
 
 // Detail view state
@@ -282,8 +307,9 @@ const detailMetrics = ref<any[]>([])
 async function fetchData() {
   loading.value = true
   try {
-    const params: any = { page: page.value, page_size: pageSize.value }
+    const params: any = { page: page.value, page_size: pageSize.value, sort: sortKey.value, order: sortKey.value === 'name' ? 'asc' : 'desc' }
     if (keyword.value) params.keyword = keyword.value
+    if (filterCategory.value) params.category = filterCategory.value
     const res = await getTemplates(params)
     templates.value = res.data.items
     total.value = res.data.total
@@ -292,7 +318,7 @@ async function fetchData() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', description: '' }
+  form.value = { name: '', description: '', category: '' }
   createDialog.value = true
 }
 
@@ -305,7 +331,7 @@ async function handleSave() {
       await updateTemplate(editingId.value, form.value)
       ElMessage.success('更新成功')
     } else {
-      await createTemplate(form.value.name, form.value.description)
+      await createTemplate(form.value.name, form.value.description, form.value.category)
       ElMessage.success('创建成功')
     }
     createDialog.value = false
@@ -327,22 +353,27 @@ async function handleInitTemplates() {
   }
 }
 
-async function handleMore(row: any, cmd: string) {
-  switch (cmd) {
-    case 'edit':
-      editingId.value = row.id
-      form.value = { name: row.name, description: row.description || '' }
-      createDialog.value = true
-      break
-    case 'delete':
-      try {
-        await ElMessageBox.confirm(`确定删除模板「${row.name}」？`, '确认删除', { type: 'warning' })
-        await deleteTemplate(row.id)
-        ElMessage.success('删除成功')
-        await fetchData()
-      } catch { /* ignore */ }
-      break
-  }
+function openEdit(row: any) {
+  editingId.value = row.id
+  form.value = { name: row.name, description: row.description || '', category: row.category || '' }
+  createDialog.value = true
+}
+
+async function handleDelete(row: any) {
+  try {
+    let extra = ''
+    try {
+      const refs = (await getTemplateRefs(row.id)).data
+      if (refs.datasource_count > 0) {
+        const names = refs.datasources.map(d => d.name).join('、')
+        extra = `\n\n该模板正被 ${refs.datasource_count} 个数据源绑定（${names}），删除后这些数据源将失去该模板的指标配置。`
+      }
+    } catch { /* 引用计数失败不影响删除流程 */ }
+    await ElMessageBox.confirm(`确定删除模板「${row.name}」？${extra}`, '确认删除', { type: 'warning', cancelButtonText: '取消', confirmButtonText: '删除' })
+    await deleteTemplate(row.id)
+    ElMessage.success('删除成功')
+    await fetchData()
+  } catch { /* ignore */ }
 }
 
 async function editMetrics(row: any) {

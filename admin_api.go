@@ -1424,6 +1424,10 @@ func (a *AdminAPI) handleMetricTypes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AdminAPI) handleMetricTypeByID(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/refs") {
+		a.handleMetricTypeRefs(w, r)
+		return
+	}
 	id, err := getLastPathID(r.URL.Path)
 	if err != nil {
 		writeError(w, 400, err.Error())
@@ -1480,6 +1484,10 @@ func (a *AdminAPI) handleMetricConfigs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AdminAPI) handleMetricConfigByID(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/refs") {
+		a.handleMetricConfigRefs(w, r)
+		return
+	}
 	id, err := getLastPathID(r.URL.Path)
 	if err != nil {
 		writeError(w, 400, err.Error())
@@ -1502,6 +1510,8 @@ func (a *AdminAPI) handleMetricConfigByID(w http.ResponseWriter, r *http.Request
 		database.DB.Save(&upd)
 		writeJSON(w, upd)
 	case "DELETE":
+		database.DB.Where("metric_config_id = ?", id).Delete(&database.InspectionTemplateMetric{})
+		database.DB.Where("metric_config_id = ?", id).Delete(&database.TemplateMetricOverride{})
 		database.DB.Delete(&database.MetricConfig{}, id)
 		w.WriteHeader(204)
 	default:
@@ -2261,25 +2271,37 @@ func (a *AdminAPI) handleTemplates(w http.ResponseWriter, r *http.Request) {
 		if kw := r.URL.Query().Get("keyword"); kw != "" {
 			query = query.Where("name LIKE ?", "%"+kw+"%")
 		}
-
-		var total int64
-		query.Count(&total)
-
-		var templates []database.InspectionTemplate
-		query.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&templates)
-
-		type result struct {
-			database.InspectionTemplate
-			MetricCount int `json:"metric_count"`
+		if cat := r.URL.Query().Get("category"); cat == "__uncategorized__" {
+			query = query.Where("category = '' OR category IS NULL")
+		} else if cat != "" {
+			query = query.Where("category = ?", cat)
 		}
-		var results []result
-		for _, t := range templates {
+
+		var all []database.InspectionTemplate
+		query.Find(&all)
+
+		results := make([]templateListItem, 0, len(all))
+		for _, t := range all {
 			var count int64
 			database.DB.Model(&database.InspectionTemplateMetric{}).Where("template_id = ?", t.ID).Count(&count)
-			results = append(results, result{InspectionTemplate: t, MetricCount: int(count)})
+			results = append(results, templateListItem{InspectionTemplate: t, MetricCount: int(count)})
 		}
+
+		// 排序：默认 created_at desc；支持 name / metric_count 并指定 asc|desc
+		sortTemplates(results, r.URL.Query().Get("sort"), r.URL.Query().Get("order"))
+
+		total := len(results)
+		start := (page - 1) * pageSize
+		if start > total {
+			start = total
+		}
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+
 		writeJSON(w, map[string]interface{}{
-			"items":     results,
+			"items":     results[start:end],
 			"total":     total,
 			"page":      page,
 			"page_size": pageSize,
@@ -2288,18 +2310,49 @@ func (a *AdminAPI) handleTemplates(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
+			Category    string `json:"category"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 			writeError(w, 400, "请提供模板名称")
 			return
 		}
-		t := database.InspectionTemplate{Name: req.Name, Description: req.Description}
+		t := database.InspectionTemplate{Name: req.Name, Description: req.Description, Category: req.Category}
 		database.DB.Create(&t)
 		w.WriteHeader(201)
 		writeJSON(w, t)
 	default:
 		writeError(w, 405, "不支持的请求方法")
 	}
+}
+
+// templateListItem 模板列表项（含指标数）
+type templateListItem struct {
+	database.InspectionTemplate
+	MetricCount int `json:"metric_count"`
+}
+
+// sortTemplates 对模板列表按指定字段排序（sortBy: name|metric_count|created_at，order: asc|desc）
+func sortTemplates(items []templateListItem, sortBy, order string) {
+	desc := order != "asc"
+	sort.SliceStable(items, func(i, j int) bool {
+		switch sortBy {
+		case "name":
+			if desc {
+				return items[i].Name > items[j].Name
+			}
+			return items[i].Name < items[j].Name
+		case "metric_count":
+			if desc {
+				return items[i].MetricCount > items[j].MetricCount
+			}
+			return items[i].MetricCount < items[j].MetricCount
+		default: // created_at
+			if desc {
+				return items[i].CreatedAt.After(items[j].CreatedAt)
+			}
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		}
+	})
 }
 
 func (a *AdminAPI) handleAllTemplates(w http.ResponseWriter, r *http.Request) {
@@ -2351,6 +2404,10 @@ func (a *AdminAPI) handleTemplateByID(w http.ResponseWriter, r *http.Request) {
 		a.handleTemplateInspect(w, r)
 		return
 	}
+	if strings.HasSuffix(r.URL.Path, "/refs") {
+		a.handleTemplateRefs(w, r)
+		return
+	}
 
 	id, err := getLastPathID(r.URL.Path)
 	if err != nil {
@@ -2397,11 +2454,101 @@ func (a *AdminAPI) handleTemplateByID(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, upd)
 	case "DELETE":
 		database.DB.Where("template_id = ?", id).Delete(&database.InspectionTemplateMetric{})
+		database.DB.Where("template_id = ?", id).Delete(&database.TemplateMetricOverride{})
 		database.DB.Delete(&database.InspectionTemplate{}, id)
 		w.WriteHeader(204)
 	default:
 		writeError(w, 405, "不支持的请求方法")
 	}
+}
+
+// handleTemplateRefs 返回模板被多少数据源绑定（删除前引用提示）
+// GET /api/promai/templates/{id}/refs
+func (a *AdminAPI) handleTemplateRefs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "不支持的请求方法")
+		return
+	}
+	id, err := parseParentID(r.URL.Path)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	type dsRef struct {
+		ID   uint   `json:"id"`
+		Name string `json:"name"`
+	}
+	var bound []dsRef
+	var sources []database.DataSource
+	database.DB.Find(&sources)
+	for i := range sources {
+		database.NormalizeDataSourceTemplateFields(&sources[i])
+		for _, tid := range sources[i].TemplateIDs {
+			if tid == id {
+				bound = append(bound, dsRef{ID: sources[i].ID, Name: sources[i].Name})
+				break
+			}
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"datasource_count": len(bound),
+		"datasources":      bound,
+	})
+}
+
+// handleMetricConfigRefs 返回指标配置被多少模板引用（删除前引用提示）
+// GET /api/promai/metrics/configs/{id}/refs
+func (a *AdminAPI) handleMetricConfigRefs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "不支持的请求方法")
+		return
+	}
+	id, err := parseParentID(r.URL.Path)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	type tmplRef struct {
+		ID   uint   `json:"id"`
+		Name string `json:"name"`
+	}
+	var refs []tmplRef
+	var links []database.InspectionTemplateMetric
+	database.DB.Where("metric_config_id = ?", id).Find(&links)
+	for _, l := range links {
+		var t database.InspectionTemplate
+		if database.DB.First(&t, l.TemplateID).Error == nil {
+			refs = append(refs, tmplRef{ID: t.ID, Name: t.Name})
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"template_count": len(refs),
+		"templates":      refs,
+	})
+}
+
+// handleMetricTypeRefs 返回指标类型下指标数与被多少模板间接引用（删除前引用提示）
+// GET /api/promai/metrics/types/{id}/refs
+func (a *AdminAPI) handleMetricTypeRefs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "不支持的请求方法")
+		return
+	}
+	id, err := parseParentID(r.URL.Path)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	var cfgIDs []uint
+	database.DB.Model(&database.MetricConfig{}).Where("metric_type_id = ?", id).Pluck("id", &cfgIDs)
+	var templateCount int64
+	if len(cfgIDs) > 0 {
+		database.DB.Model(&database.InspectionTemplateMetric{}).Where("metric_config_id IN ?", cfgIDs).Count(&templateCount)
+	}
+	writeJSON(w, map[string]interface{}{
+		"config_count":   len(cfgIDs),
+		"template_count": int(templateCount),
+	})
 }
 
 func (a *AdminAPI) handleTemplateMetrics(w http.ResponseWriter, r *http.Request) {

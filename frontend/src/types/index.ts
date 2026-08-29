@@ -47,6 +47,8 @@ export interface MetricConfig {
 export interface MetricType {
   id?: number
   type_name: string
+  description?: string
+  color?: string
   sort_order?: number
   configs?: MetricConfig[]
   created_at?: string

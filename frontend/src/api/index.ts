@@ -134,6 +134,9 @@ export const createMetricConfig = (c: MetricConfig) => api.post<MetricConfig>('/
 export const updateMetricConfig = (id: number, c: MetricConfig) => api.put<MetricConfig>(`/metrics/configs/${id}`, c)
 export const deleteMetricConfig = (id: number) => api.delete(`/metrics/configs/${id}`)
 export const validatePromQL = (datasourceId: number | undefined, query: string) => api.post('/metrics/validate', { datasource_id: datasourceId, query })
+// 引用计数：删除前提示被多少模板/数据源使用
+export const getMetricConfigRefs = (id: number) => api.get<{ template_count: number; templates: { id: number; name: string }[] }>(`/metrics/configs/${id}/refs`)
+export const getMetricTypeRefs = (id: number) => api.get<{ config_count: number; template_count: number }>(`/metrics/types/${id}/refs`)
 
 // Settings
 export const getSettings = () => api.get<Record<string, string>>('/settings')
@@ -169,13 +172,15 @@ export const getTemplates = (params?: { page?: number; page_size?: number; keywo
 export const getAllTemplates = () => api.get<any[]>('/templates/all')
 export const initTemplates = () => api.post('/templates/init')
 export const getTemplate = (id: number) => api.get(`/templates/${id}`)
-export const createTemplate = (name: string, description?: string) => api.post('/templates', { name, description })
+export const createTemplate = (name: string, description?: string, category?: string) => api.post('/templates', { name, description, category })
 export const updateTemplate = (id: number, t: any) => api.put(`/templates/${id}`, t)
 export const deleteTemplate = (id: number) => api.delete(`/templates/${id}`)
 export const getTemplateMetrics = (id: number) => api.get(`/templates/${id}/metrics`)
 export const setTemplateMetrics = (id: number, metricConfigIds: number[]) => api.post(`/templates/${id}/metrics`, { metric_config_ids: metricConfigIds })
 export const saveTemplateMetricOverride = (templateId: number, configId: number, data: any) => api.put(`/templates/${templateId}/metrics/${configId}/override`, data)
 export const inspectWithTemplate = (id: number, req: any) => api.post(`/templates/${id}/inspect`, req)
+// 引用计数：删除模板前提示被多少数据源绑定
+export const getTemplateRefs = (id: number) => api.get<{ datasource_count: number; datasources: { id: number; name: string }[] }>(`/templates/${id}/refs`)
 
 // AI Agent
 export const aiChat = (message: string, sessionId?: string) =>
