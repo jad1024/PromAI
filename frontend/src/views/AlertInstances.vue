@@ -53,26 +53,26 @@
     <div class="section-card">
       <div class="section-header">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><List /></el-icon> 活跃告警列表</h3>
-        <div class="action-bar">
+        <div class="action-bar action-bar--compact">
           <div class="refresh-ctl" title="自动刷新间隔（秒），修改后立即生效并保存">
             <el-icon><Timer /></el-icon>
             <span>刷新</span>
             <el-input-number v-model="refreshSec" :min="5" :max="600" :step="5" size="small" controls-position="right" style="width: 92px" @change="restartTimer" />
             <span>秒</span>
           </div>
-          <el-select v-model="filters.severity" placeholder="全部级别" clearable style="width: 120px;" @change="fetchData">
+          <el-select v-model="filters.severity" placeholder="全部级别" clearable size="small" style="width: 110px;" @change="fetchData">
             <el-option label="严重 critical" value="critical" />
             <el-option label="警告 warning" value="warning" />
             <el-option label="提醒 info" value="info" />
           </el-select>
-          <el-select v-model="filters.state" placeholder="全部状态" clearable style="width: 150px;" @change="fetchData">
+          <el-select v-model="filters.state" placeholder="全部状态" clearable size="small" style="width: 140px;" @change="fetchData">
             <el-option label="活跃 (pending+firing)" value="pending,firing" />
             <el-option label="firing" value="firing" />
             <el-option label="pending" value="pending" />
             <el-option label="resolved" value="resolved" />
             <el-option label="全部（含已恢复）" value="" />
           </el-select>
-          <el-select v-model="filters.datasource_id" placeholder="全部数据源" clearable filterable style="width: 180px;" @change="fetchData">
+          <el-select v-model="filters.datasource_id" placeholder="全部数据源" clearable filterable size="small" style="width: 150px;" @change="fetchData">
             <el-option v-for="ds in datasources" :key="ds.id" :label="ds.name" :value="ds.id" />
           </el-select>
           <el-date-picker
@@ -81,21 +81,22 @@
             range-separator="至"
             start-placeholder="触发时间起"
             end-placeholder="触发时间止"
-            style="width: 310px;"
+            size="small"
+            style="width: 280px;"
             :clearable="true"
             @change="onTimeRangeChange"
           />
-          <el-input v-model="filters.keyword" placeholder="搜索 label" style="width: 170px;" clearable @keyup.enter="fetchData">
+          <el-input v-model="filters.keyword" placeholder="搜索 label" size="small" style="width: 150px;" clearable @keyup.enter="fetchData">
             <template #suffix><el-icon><Search /></el-icon></template>
           </el-input>
           <el-checkbox v-model="includeMasked" @change="fetchData">含已静默/抑制</el-checkbox>
-          <el-button plain @click="fetchData"><el-icon><Refresh /></el-icon></el-button>
+          <el-button size="small" plain @click="fetchData"><el-icon><Refresh /></el-icon></el-button>
           <el-button-group>
-            <el-button plain :type="viewMode === 'card' ? 'primary' : 'default'" @click="setViewMode('card')" title="卡片视图"><el-icon><Grid /></el-icon></el-button>
-            <el-button plain :type="viewMode === 'table' ? 'primary' : 'default'" @click="setViewMode('table')" title="表格视图"><el-icon><Tickets /></el-icon></el-button>
+            <el-button size="small" plain :type="viewMode === 'card' ? 'primary' : 'default'" @click="setViewMode('card')" title="卡片视图"><el-icon><Grid /></el-icon></el-button>
+            <el-button size="small" plain :type="viewMode === 'table' ? 'primary' : 'default'" @click="setViewMode('table')" title="表格视图"><el-icon><Tickets /></el-icon></el-button>
           </el-button-group>
           <el-dropdown trigger="click">
-            <el-button plain title="自定义显示列"><el-icon><Setting /></el-icon></el-button>
+            <el-button size="small" plain title="自定义显示列"><el-icon><Setting /></el-icon></el-button>
             <template #dropdown>
               <div style="padding:8px 12px;min-width:150px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -114,7 +115,7 @@
               </div>
             </template>
           </el-dropdown>
-          <el-button plain type="danger" @click="handleClearAll"><el-icon><Delete /></el-icon> 清空所有</el-button>
+          <el-button size="small" plain type="danger" @click="handleClearAll"><el-icon><Delete /></el-icon> 清空所有</el-button>
         </div>
       </div>
 
@@ -130,7 +131,7 @@
 
       <el-table v-if="viewMode === 'table'" :data="rows" v-loading="loading" stripe size="default" @selection-change="onSelectionChange">
         <el-table-column type="selection" width="44" align="center" />
-        <el-table-column v-if="isVisible('severity')" label="级别" width="86" align="center">
+        <el-table-column v-if="isVisible('severity')" label="级别" width="80" align="center">
           <template #default="{ row }">
             <el-tag size="small" effect="dark" :style="severityStyle(row.severity)">{{ severityLabel(row.severity) }}</el-tag>
           </template>
@@ -140,7 +141,7 @@
             <el-tag size="small" :style="stateStyle(row.state)">{{ row.state }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('unread')" label="未读" width="64" align="center">
+        <el-table-column v-if="isVisible('unread')" label="未读" width="62" align="center">
           <template #default="{ row }">
             <span v-if="(row.unread_count || 0) > 0" class="unread-badge"
                   :title="`${row.unread_count} 次新增告警未读，点击详情或标记已读清零`">
@@ -149,62 +150,72 @@
             <span v-else class="unread-none">-</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('masked')" label="抑制/静默" width="92" align="center">
+        <el-table-column v-if="isVisible('masked')" label="抑制/静默" width="98" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.silenced_by?.length" size="small" class="tag-silence">静默</el-tag>
             <el-tag v-if="row.inhibited_by?.length" size="small" class="tag-inhibit">抑制</el-tag>
+            <span v-if="!row.silenced_by?.length && !row.inhibited_by?.length" class="unread-none">-</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('rule')" label="规则" min-width="220">
+        <el-table-column v-if="isVisible('rule')" label="规则" min-width="200">
           <template #default="{ row }">
-            <div class="rule-name">{{ row.rule_name || ruleName(row.rule_id) }}</div>
-            <div class="rule-sub">{{ row.annotations?.summary || row.external_source_name || '-' }}</div>
+            <div class="table-cell-main">
+              <span class="main" :title="row.rule_name || ruleName(row.rule_id)">{{ row.rule_name || ruleName(row.rule_id) }}</span>
+              <span class="sub" :title="row.annotations?.summary || row.external_source_name || '-'">{{ row.annotations?.summary || row.external_source_name || '-' }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('datasource')" label="数据源" width="170">
+        <el-table-column v-if="isVisible('datasource')" label="数据源" min-width="120">
           <template #default="{ row }">
-            <span class="ds-name">{{ dsDisplay(row) }}</span>
+            <span class="ds-name cell-ellipsis" :title="dsDisplay(row)">{{ dsDisplay(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('value')" label="value / threshold" width="172">
+        <el-table-column v-if="isVisible('value')" label="value / threshold" width="140" align="right">
           <template #default="{ row }">
             <span class="val-cyan">{{ formatNum(row.value) }}</span>
             <span class="val-dim"> / {{ formatNum(row.threshold) }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('firingCount')" label="触发次数" width="88" align="center">
+        <el-table-column v-if="isVisible('firingCount')" label="触发" width="64" align="center">
           <template #default="{ row }">
             <span class="firing-count">{{ row.firing_count || 0 }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('labels')" label="标签" min-width="240">
+        <el-table-column v-if="isVisible('labels')" label="标签" min-width="220">
           <template #default="{ row }">
-            <el-tag v-for="(v, k) in row.labels || {}" :key="k" size="small" class="label-tag">
-              {{ k }}={{ v }}
-            </el-tag>
+            <div class="label-stack">
+              <el-tag v-for="(v, k) in row.labels || {}" :key="k" size="small" class="label-pill" :title="`${k}=${v}`">
+                <span class="pill-k">{{ k }}=</span><span class="pill-v">{{ v }}</span>
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('trend')" label="趋势" width="140" align="center">
+        <el-table-column v-if="isVisible('trend')" label="趋势" width="120" align="center">
           <template #default="{ row }">
             <Sparkline :data="trends[row.fingerprint]" :color="row.state === 'resolved' ? '#10b981' : '#3b82f6'" />
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('time')" label="触发时间" width="158">
+        <el-table-column v-if="isVisible('time')" label="触发时间" width="148">
           <template #default="{ row }">
-            <span class="time-cell">{{ formatTime(row.fired_at || row.active_at) }}</span>
+            <span class="time-cell cell-ellipsis" :title="formatTime(row.fired_at || row.active_at)">{{ formatTime(row.fired_at || row.active_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="212" fixed="right">
+        <el-table-column label="操作" width="148" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" text style="color: var(--cyan);" @click="openDetail(row)">详情</el-button>
-            <el-button v-if="(row.unread_count || 0) > 0" size="small" text style="color: var(--red);" @click="markRead(row)">已读</el-button>
-            <el-button size="small" text style="color: var(--amber);" @click="openSilence(row)">静默</el-button>
-            <el-button
-              v-if="row.state === 'firing' || row.state === 'pending'"
-              size="small" text type="danger"
-              :loading="resolvingFp === row.fingerprint"
-              @click="doResolve(row)"
-            >结束</el-button>
+            <div class="row-actions">
+              <el-tooltip content="详情" placement="top">
+                <el-button size="small" text style="color: var(--cyan);" @click="openDetail(row)"><el-icon><View /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip v-if="(row.unread_count || 0) > 0" content="标记已读" placement="top">
+                <el-button size="small" text style="color: var(--red);" @click="markRead(row)"><el-icon><Check /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip content="静默" placement="top">
+                <el-button size="small" text style="color: var(--amber);" @click="openSilence(row)"><el-icon><Mute /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip v-if="row.state === 'firing' || row.state === 'pending'" content="结束告警" placement="top">
+                <el-button size="small" text type="danger" :loading="resolvingFp === row.fingerprint" @click="doResolve(row)"><el-icon><CircleCheck /></el-icon></el-button>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -1233,31 +1244,12 @@ onBeforeUnmount(() => {
 }
 .unread-none { color: var(--text-tertiary); font-size: 12px; }
 
-.rule-name {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-size: 13px;
-  line-height: 1.4;
-}
-.rule-sub {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .ds-name { color: var(--text-secondary); font-size: 13px; }
 .val-cyan { color: var(--cyan); font-weight: 600; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; }
 .val-dim { color: var(--text-tertiary); font-family: 'SF Mono', Monaco, monospace; font-size: 12px; }
 .firing-count { color: var(--amber); font-weight: 600; font-size: 13px; }
-.time-cell { font-size: 12px; color: var(--text-tertiary); }
-.label-tag {
-  margin: 1px 4px 1px 0;
-  background: rgba(99, 102, 241, 0.1);
-  color: #818cf8;
-  border: none;
-  font-family: 'SF Mono', Monaco, monospace;
-}
+.time-cell { font-size: 12px; color: var(--text-tertiary); font-family: 'SF Mono', Monaco, monospace; }
+.label-pill { margin: 0; }
 .tag-silence { background: rgba(96, 165, 250, 0.15); color: #60a5fa; border: none; }
 .tag-inhibit { background: rgba(251, 191, 36, 0.15); color: #fbbf24; border: none; }
 

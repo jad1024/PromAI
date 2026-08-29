@@ -90,6 +90,97 @@
           </div>
         </div>
       </div>
+
+      <!-- 自定义主题生成器 -->
+      <div class="custom-theme">
+        <div class="custom-theme-head">
+          <h4>
+            <el-icon :size="14" :color="getCssVar('--cyan')"><MagicStick /></el-icon>
+            主题生成器
+          </h4>
+          <div class="custom-theme-actions">
+            <el-button size="small" plain @click="setTheme('custom')" :type="isCustomActive ? 'primary' : 'default'">
+              <el-icon><Check /></el-icon> 应用自定义
+            </el-button>
+            <el-button size="small" plain @click="resetCustom"><el-icon><RefreshLeft /></el-icon> 恢复默认</el-button>
+          </div>
+        </div>
+
+        <div class="custom-theme-body">
+          <!-- 左：主色生成器（自动配色） -->
+          <div class="custom-theme-gen">
+            <div class="ct-block-title">一键生成</div>
+            <div class="ct-row">
+              <el-color-picker v-model="genPrimary" size="small" />
+              <el-radio-group v-model="genMode" size="small">
+                <el-radio-button label="dark" />
+                <el-radio-button label="light" />
+              </el-radio-group>
+              <el-button size="small" type="primary" plain @click="onGenerate">
+                <el-icon><MagicStick /></el-icon> 基于主色生成
+              </el-button>
+            </div>
+            <div class="ct-tip">输入主色后系统会按明/暗模式自动衍生背景/文字/强调色，生成结果实时应用到自定义主题面板</div>
+
+            <div class="ct-block-title" style="margin-top: 18px;">预设色板</div>
+            <div class="ct-presets">
+              <div
+                v-for="p in PRESETS"
+                :key="p.color"
+                class="ct-preset"
+                :style="{ background: p.color }"
+                :title="`${p.name} ${p.color}`"
+                @click="onApplyPreset(p)"
+              />
+            </div>
+          </div>
+
+          <!-- 中：颜色微调 -->
+          <div class="custom-theme-pickers">
+            <div class="ct-block-title">颜色微调</div>
+            <div class="ct-pickers">
+              <div v-for="f in COLOR_FIELDS" :key="f.key" class="ct-pick">
+                <el-color-picker v-model="customTheme[f.key]" size="small" />
+                <div class="ct-pick-label">
+                  <span class="ct-pick-name">{{ f.label }}</span>
+                  <span class="ct-pick-var">--{{ f.var }}</span>
+                </div>
+                <el-input v-model="customTheme[f.key]" size="small" style="width: 110px;" />
+              </div>
+            </div>
+            <el-input v-model="customTheme.name" size="small" placeholder="主题名称" style="margin-top: 10px;" />
+          </div>
+
+          <!-- 右：实时预览 -->
+          <div class="custom-theme-preview">
+            <div class="ct-block-title">实时预览</div>
+            <div class="ct-preview" :style="previewStyle">
+              <div class="ct-prev-side"></div>
+              <div class="ct-prev-main">
+                <div class="ct-prev-card">
+                  <div class="ct-prev-row">
+                    <span class="ct-dot ct-dot-red" />
+                    <span class="ct-prev-text">严重 告警</span>
+                  </div>
+                  <div class="ct-prev-row">
+                    <span class="ct-dot ct-dot-amber" />
+                    <span class="ct-prev-text">警告 告警</span>
+                  </div>
+                  <div class="ct-prev-row">
+                    <span class="ct-dot ct-dot-emerald" />
+                    <span class="ct-prev-text">已恢复</span>
+                  </div>
+                </div>
+                <div class="ct-prev-btns">
+                  <div class="ct-btn ct-btn-primary">主要按钮</div>
+                  <div class="ct-btn">次要按钮</div>
+                  <div class="ct-btn ct-btn-danger">危险</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="form-section">
@@ -189,7 +280,7 @@ function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
-const { currentTheme, setTheme, themeOptions } = useTheme()
+const { currentTheme, setTheme, themeOptions, customTheme, isCustomActive, generateFromPrimary, resetCustom } = useTheme()
 
 interface AIModelForm {
   name: string
@@ -321,6 +412,64 @@ async function handleSave() {
 }
 
 onMounted(fetchData)
+
+/** ===== 自定义主题生成器 ===== */
+const COLOR_FIELDS = [
+  { key: 'bgPrimary', label: '页面背景', var: 'bg-primary' },
+  { key: 'bgCard', label: '卡片背景', var: 'bg-card' },
+  { key: 'bgElevated', label: '浮层背景', var: 'bg-elevated' },
+  { key: 'textPrimary', label: '主要文字', var: 'text-primary' },
+  { key: 'textSecondary', label: '次要文字', var: 'text-secondary' },
+  { key: 'border', label: '边框色', var: 'border' },
+  { key: 'cyan', label: '主色（强调）', var: 'cyan' },
+  { key: 'red', label: '危险', var: 'red' },
+  { key: 'amber', label: '警告', var: 'amber' },
+  { key: 'emerald', label: '成功', var: 'emerald' },
+  { key: 'purple', label: '辅助', var: 'purple' },
+] as const
+
+const PRESETS = [
+  { name: '湖青', color: '#06b6d4' },
+  { name: '靛蓝', color: '#6366f1' },
+  { name: '品红', color: '#ec4899' },
+  { name: '翡翠', color: '#10b981' },
+  { name: '琥珀', color: '#f59e0b' },
+  { name: '玫红', color: '#f43f5e' },
+  { name: '薰衣', color: '#a855f7' },
+  { name: '海蓝', color: '#0ea5e9' },
+  { name: '薄荷', color: '#34d399' },
+  { name: '石墨', color: '#475569' },
+  { name: '朱砂', color: '#ef4444' },
+  { name: '焦糖', color: '#d97706' },
+]
+
+const genPrimary = ref('#06b6d4')
+const genMode = ref<'dark' | 'light'>('dark')
+
+function onGenerate() {
+  generateFromPrimary(genPrimary.value, genMode.value)
+  setTheme('custom')
+  ElMessage.success(`已基于 ${genPrimary.value.toUpperCase()} 生成${genMode.value === 'dark' ? '深色' : '浅色'}主题`)
+}
+
+function onApplyPreset(p: { name: string; color: string }) {
+  genPrimary.value = p.color
+  onGenerate()
+}
+
+const previewStyle = computed(() => ({
+  '--p-bg': customTheme.bgPrimary,
+  '--p-card': customTheme.bgCard,
+  '--p-elevated': customTheme.bgElevated,
+  '--p-text': customTheme.textPrimary,
+  '--p-text-2': customTheme.textSecondary,
+  '--p-border': customTheme.border,
+  '--p-cyan': customTheme.cyan,
+  '--p-red': customTheme.red,
+  '--p-amber': customTheme.amber,
+  '--p-emerald': customTheme.emerald,
+  '--p-purple': customTheme.purple,
+}))
 </script>
 
 <style scoped>
@@ -463,4 +612,143 @@ onMounted(fetchData)
   align-items: center;
   justify-content: center;
 }
+
+/* ===== 自定义主题生成器 ===== */
+.custom-theme {
+  margin-top: 20px;
+  padding: 18px 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.custom-theme-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.custom-theme-head h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.custom-theme-actions { display: flex; gap: 8px; }
+.custom-theme-body {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  gap: 18px;
+}
+@media (max-width: 1100px) {
+  .custom-theme-body { grid-template-columns: 1fr; }
+}
+.ct-block-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
+.ct-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ct-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.ct-presets {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+.ct-preset {
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+.ct-preset:hover {
+  transform: scale(1.08);
+  border-color: var(--text-primary);
+}
+.ct-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ct-pick {
+  display: grid;
+  grid-template-columns: 36px 1fr 110px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.ct-pick-label { display: flex; flex-direction: column; min-width: 0; }
+.ct-pick-name { font-size: 12.5px; color: var(--text-primary); font-weight: 500; }
+.ct-pick-var { font-size: 11px; color: var(--text-tertiary); font-family: 'SF Mono', Monaco, monospace; }
+.ct-preview {
+  background: var(--p-bg);
+  border: 1px solid var(--p-border);
+  border-radius: 10px;
+  display: flex;
+  height: 200px;
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+}
+.ct-prev-side {
+  width: 36px;
+  flex-shrink: 0;
+  background: var(--p-elevated);
+}
+.ct-prev-main {
+  flex: 1;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.ct-prev-card {
+  background: var(--p-card);
+  border: 1px solid var(--p-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ct-prev-row { display: flex; align-items: center; gap: 8px; }
+.ct-prev-text { font-size: 12px; color: var(--p-text); font-weight: 500; }
+.ct-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+.ct-dot-red { background: var(--p-red); color: var(--p-red); }
+.ct-dot-amber { background: var(--p-amber); color: var(--p-amber); }
+.ct-dot-emerald { background: var(--p-emerald); color: var(--p-emerald); }
+.ct-prev-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.ct-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--p-elevated);
+  color: var(--p-text);
+  font-weight: 600;
+  border: 1px solid var(--p-border);
+}
+.ct-btn-primary { background: var(--p-cyan); color: var(--p-card); border-color: var(--p-cyan); }
+.ct-btn-danger { background: var(--p-red); color: #fff; border-color: var(--p-red); }
 </style>
