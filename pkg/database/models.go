@@ -454,10 +454,16 @@ type AlertHistory struct {
 	NotifyResult    string     `gorm:"size:20" json:"notify_result"`     // 通知结果: success/failed/throttled
 	OccurredAt      time.Time  `gorm:"index" json:"occurred_at"`
 	CreatedAt       time.Time  `json:"created_at"`
-	// RemovedAt 手动删除标记：用户手动删除实时告警或聚合故障时置位（软删），
-	// 所有读取侧统一过滤 removed_at IS NULL。刻意不用 gorm.DeletedAt，
-	// 保持 handleAlertHistory 的 DELETE 仍为物理删除。
+	// RemovedAt 手动硬删标记：用户手动删除实时告警时置位（软删），所有读取侧
+	// 统一过滤 removed_at IS NULL。刻意不用 gorm.DeletedAt，保持 handleAlertHistory
+	// 的 DELETE 仍为物理删除。
 	RemovedAt *time.Time `gorm:"index" json:"removed_at,omitempty"`
+	// DismissedAt 聚合层临时隐藏标记：用户手动删除事件聚合故障时置位（仅聚合页过滤）。
+	// 与 RemovedAt 的区别：新告警事件到来时 AlertHistory 总是新增一行（无 dismissed_at），
+	// 聚合查询按 fingerprint 取最新一行的状态，旧 dismissed 行不再参与决策。
+	// 因此未恢复告警的故障被聚合页删除后，再次告警会自动重新出现；而已恢复的告警
+	// 因为不会有新行，旧 dismissed 行始终被过滤，达成「彻底隐藏」的效果。
+	DismissedAt *time.Time `gorm:"index" json:"dismissed_at,omitempty"`
 }
 
 // AlertSilence 静默规则

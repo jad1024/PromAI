@@ -250,10 +250,5 @@ func GenerateReport(data ReportData) (string, error) {
 	// log.Println("Report generated successfully:", filename)
 	log.Printf("项目[%s]报告生成成功: %s", data.Project, filename)
 
-	// 顺带生成 Word (.docx) 版本，失败不影响 HTML 报告主流程
-	if _, err := GenerateDocx(filename, data); err != nil {
-		log.Printf("Word 报告生成失败（HTML 报告不受影响）: %v", err)
-	}
-
 	return filename, nil // 添加返回语句
 }

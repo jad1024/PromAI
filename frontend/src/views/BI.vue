@@ -221,7 +221,10 @@
               </el-table>
             </div>
           </div>
-          <div v-else style="padding: 20px; text-align: center; color: var(--text-tertiary);">点击数据源「详情」查看指标明细</div>
+          <div v-else style="padding: 40px 20px; text-align: center; color: var(--text-tertiary); display: flex; flex-direction: column; align-items: center; gap: 12px;">
+            <el-icon :size="40" style="opacity: 0.5;"><DataAnalysis /></el-icon>
+            <div style="font-size: 14px;">{{ allDatasources.length === 0 ? '暂无数据源，请先在「数据源管理」添加 Prometheus 数据源' : '点击上方「详情」或在数据源列表中选择一个数据源查看指标明细' }}</div>
+          </div>
         </div>
       </grid-item>
     </grid-layout>
@@ -563,6 +566,12 @@ onMounted(async () => {
     fetchData(),
   ])
   await fetchTrend()
+  // 自动展开第一个数据源的指标明细：避免首次进入页面看到空态
+  if (allDatasources.value.length > 0 && !expandedDS.value) {
+    const first = allDatasources.value[0]
+    const d = healthData.value.find((h: any) => h.datasource.id === first.id)
+    if (d) expandedDS.value = d
+  }
 })
 
 onUnmounted(() => {

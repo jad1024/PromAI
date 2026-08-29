@@ -52,11 +52,16 @@
         <el-table-column label="时间" width="170">
           <template #default="{ row }">{{ dayjs(row.created_at).format('YYYY-MM-DD HH:mm') }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" text @click="viewReport(row)" style="color: var(--cyan);">查看</el-button>
-            <el-button size="small" text @click="downloadDocx(row)" style="color: var(--emerald);">Word</el-button>
-            <el-button size="small" text @click="handleDelete(row)" style="color: var(--red);">删除</el-button>
+            <div class="row-actions">
+              <el-tooltip content="查看" placement="top">
+                <el-button size="small" text style="color: var(--cyan);" @click="viewReport(row)"><el-icon><View /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip content="删除" placement="top">
+                <el-button size="small" text type="danger" @click="handleDelete(row)"><el-icon><Delete /></el-icon></el-button>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -112,12 +117,6 @@ function viewReport(row: ReportRecord) {
   const filename = row.file_path?.replace(/^reports\//, '')
   if (!filename) { ElMessage.warning('报告文件路径无效'); return }
   openReportFile('reports/' + filename).catch((e: any) => ElMessage.error('打开报告失败：' + e.message))
-}
-
-function downloadDocx(row: ReportRecord) {
-  const filename = (row.file_path?.replace(/^reports\//, '') || '').replace(/\.html$/i, '.docx')
-  if (!filename) { ElMessage.warning('报告文件路径无效'); return }
-  openReportFile('reports/' + filename).catch((e: any) => ElMessage.error('下载报告失败：' + e.message))
 }
 
 async function handleDelete(row: ReportRecord) {

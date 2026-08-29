@@ -99,20 +99,20 @@
 
       <el-table :data="datasources" v-loading="loading" stripe @selection-change="(rows: any[]) => selectedIds = rows.map((r: any) => r.id)">
         <el-table-column type="selection" width="44" />
-        <el-table-column prop="name" label="名称" min-width="180">
+        <el-table-column prop="name" label="名称" min-width="160">
           <template #default="{ row }">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span :style="{ fontWeight: 600, color: row.enabled === false ? 'var(--text-tertiary)' : 'var(--text-primary)', textDecoration: row.enabled === false ? 'line-through' : 'none' }">{{ row.name }}</span>
-              <el-tag v-if="row.is_default" size="small" effect="dark" style="background: rgba(0,212,255,0.15); color: var(--cyan); border: none;">默认</el-tag>
+            <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+              <span class="cell-ellipsis" :style="{ fontWeight: 600, color: row.enabled === false ? 'var(--text-tertiary)' : 'var(--text-primary)', textDecoration: row.enabled === false ? 'line-through' : 'none' }" :title="row.name">{{ row.name }}</span>
+              <el-tag v-if="row.is_default" size="small" effect="dark" style="background: rgba(0,212,255,0.15); color: var(--cyan); border: none; flex-shrink: 0;">默认</el-tag>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="url" label="URL" min-width="300">
+        <el-table-column prop="url" label="URL" min-width="220">
           <template #default="{ row }">
-            <code style="font-size: 12px; color: var(--text-tertiary);">{{ row.url }}</code>
+            <code class="cell-ellipsis" style="font-size: 12px; color: var(--text-tertiary); display: block;" :title="row.url">{{ row.url }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="80" align="center">
+        <el-table-column label="状态" width="76" align="center">
           <template #default="{ row }">
             <el-switch
               :model-value="row.enabled !== false"
@@ -122,64 +122,68 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="健康状态" width="180" align="center">
+        <el-table-column label="健康状态" width="156" align="center">
           <template #default="{ row }">
-            <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
-              <span :style="healthTextStyle(row.health_status)" style="display: flex; align-items: center; gap: 4px; font-size: 13px;">
+            <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0;">
+              <span :style="healthTextStyle(row.health_status)" style="display: flex; align-items: center; gap: 4px; font-size: 12.5px;">
                 <span :style="healthDotStyle(row.health_status)"></span>{{ healthLabel(row.health_status) }}
               </span>
-              <span style="font-size: 11px; color: var(--text-tertiary);">
-                连通: {{ healthLabel(row.connection_status) }}<span v-if="row.connection_checked_at"> · {{ dayjs(row.connection_checked_at).format('MM-DD HH:mm') }}</span>
-              </span>
-              <span style="font-size: 11px; color: var(--text-tertiary);">
-                巡检: {{ healthLabel(row.report_status) }}<span v-if="row.last_report_at"> · {{ dayjs(row.last_report_at).format('MM-DD HH:mm') }}</span>
-              </span>
+              <span class="cell-ellipsis" style="font-size: 11px; color: var(--text-tertiary); max-width: 100%;">连通: {{ healthLabel(row.connection_status) }}<span v-if="row.connection_checked_at"> · {{ dayjs(row.connection_checked_at).format('MM-DD HH:mm') }}</span></span>
+              <span class="cell-ellipsis" style="font-size: 11px; color: var(--text-tertiary); max-width: 100%;">巡检: {{ healthLabel(row.report_status) }}<span v-if="row.last_report_at"> · {{ dayjs(row.last_report_at).format('MM-DD HH:mm') }}</span></span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="username" label="用户名" width="100">
+        <el-table-column prop="username" label="用户" width="80">
           <template #default="{ row }">
-            <span v-if="row.username" style="color: var(--text-secondary);">{{ row.username }}</span>
+            <span v-if="row.username" class="cell-ellipsis" style="color: var(--text-secondary); display: block;" :title="row.username">{{ row.username }}</span>
             <span v-else style="color: var(--text-tertiary);">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="巡检模板" min-width="220">
+        <el-table-column label="巡检模板" min-width="180">
           <template #default="{ row }">
-            <span v-if="normalizeTemplateIds(row).length" style="color: var(--text-secondary); font-size: 13px;">{{ templateNames(normalizeTemplateIds(row)) }}</span>
-            <span v-else style="color: var(--text-tertiary); font-size: 13px;">-</span>
+            <span v-if="normalizeTemplateIds(row).length" class="cell-ellipsis" style="color: var(--text-secondary); font-size: 12.5px; display: block;" :title="templateNames(normalizeTemplateIds(row))">{{ templateNames(normalizeTemplateIds(row)) }}</span>
+            <span v-else style="color: var(--text-tertiary); font-size: 12.5px;">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="项目名称" width="150">
+        <el-table-column label="项目" width="120">
           <template #default="{ row }">
-            <span v-if="row.project_name" style="color: var(--text-secondary); font-size: 13px;">{{ row.project_name }}</span>
-            <span v-else style="color: var(--text-tertiary); font-size: 13px;">跟随系统设置</span>
+            <span v-if="row.project_name" class="cell-ellipsis" style="color: var(--text-secondary); font-size: 12.5px; display: block;" :title="row.project_name">{{ row.project_name }}</span>
+            <span v-else style="color: var(--text-tertiary); font-size: 12.5px;">跟随系统</span>
           </template>
         </el-table-column>
-        <el-table-column label="通知渠道" width="170">
+        <el-table-column label="通知" width="140">
           <template #default="{ row }">
-            <span v-if="row.notify_channels" style="color: var(--text-secondary); font-size: 13px;">{{ channelNames(row.notify_channels) }}</span>
-            <span v-else style="color: var(--text-tertiary); font-size: 13px;">-</span>
+            <span v-if="row.notify_channels" class="cell-ellipsis" style="color: var(--text-secondary); font-size: 12.5px; display: block;" :title="channelNames(row.notify_channels)">{{ channelNames(row.notify_channels) }}</span>
+            <span v-else style="color: var(--text-tertiary); font-size: 12.5px;">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="160">
-          <template #default="{ row }">{{ dayjs(row.created_at).format('MM-DD HH:mm') }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="340" fixed="right">
+        <el-table-column label="创建时间" width="116">
           <template #default="{ row }">
-            <el-button size="small" text @click="openEdit(row)" style="color: var(--cyan);">编辑</el-button>
-            <el-button size="small" text @click="testConnectivity(row)" style="color: var(--emerald);">测试</el-button>
-            <el-button size="small" text @click="inspectDS(row)" style="color: var(--red);">巡检</el-button>
-            <el-dropdown trigger="click" @command="(cmd: string) => handleMore(row, cmd)">
-              <el-button size="small" text style="color: var(--text-tertiary);">
-                更多<el-icon><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="template"><el-icon><CopyDocument /></el-icon> 导入全局指标</el-dropdown-item>
-                  <el-dropdown-item command="delete" style="color: var(--red);"><el-icon><Delete /></el-icon> 删除</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            <span style="font-size: 12px; color: var(--text-tertiary); font-family: 'SF Mono', Monaco, monospace;">{{ dayjs(row.created_at).format('MM-DD HH:mm') }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <div class="row-actions">
+              <el-tooltip content="编辑" placement="top">
+                <el-button size="small" text style="color: var(--cyan);" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip content="测试连通" placement="top">
+                <el-button size="small" text style="color: var(--emerald);" @click="testConnectivity(row)"><el-icon><Connection /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip content="立即巡检" placement="top">
+                <el-button size="small" text style="color: var(--red);" @click="inspectDS(row)"><el-icon><Monitor /></el-icon></el-button>
+              </el-tooltip>
+              <el-dropdown trigger="click" @command="(cmd: string) => handleMore(row, cmd)">
+                <el-button size="small" text style="color: var(--text-tertiary);"><el-icon><MoreFilled /></el-icon></el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="template"><el-icon><CopyDocument /></el-icon> 导入全局指标</el-dropdown-item>
+                    <el-dropdown-item command="delete" style="color: var(--red);"><el-icon><Delete /></el-icon> 删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>

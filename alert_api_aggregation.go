@@ -504,7 +504,7 @@ func (a *AdminAPI) handleAlertIncidents(w http.ResponseWriter, r *http.Request) 
 
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	q := database.DB.Model(&database.AlertHistory{}).
-		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL AND dismissed_at IS NULL",
 			[]string{"firing", "resolved", "pending"}, since)
 	if dsID > 0 {
 		q = q.Where("datasource_id = ?", dsID)
@@ -601,7 +601,7 @@ func (a *AdminAPI) handleAlertIncidentDetail(w http.ResponseWriter, r *http.Requ
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	var rows []database.AlertHistory
 	if err := database.DB.Model(&database.AlertHistory{}).
-		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL AND dismissed_at IS NULL",
 			[]string{"firing", "resolved", "pending"}, since).
 		Order("occurred_at ASC").Limit(50000).Scan(&rows).Error; err != nil {
 		writeError(w, 500, "查询告警历史失败: "+err.Error())
@@ -647,8 +647,11 @@ func collectIncidentFingerprints(all []incidentDetailFull, keys []string) ([]str
 }
 
 // handleAlertIncidentDelete POST /api/promai/alert/incidents/delete
-// 删除聚合故障（软删）：把故障内所有告警对应的 AlertHistory 标记 removed_at，
-// 聚合与历史随即不再出现。手动删除无恢复记录，故删除不可逆（与实时告警删除语义一致）。
+// 删除聚合故障（聚合层软隐藏）：把故障内所有 AlertHistory 标记 dismissed_at（不动 removed_at）。
+// 聚合查询过滤 dismissed_at IS NULL 后该故障立即消失；但只要底层 AlertInstance 仍在
+// firing/pending，下一次新的告警事件会插入一条新的 AlertHistory（无 dismissed_at），
+// 聚合按 fingerprint 取最新一行的状态，告警会自动重新出现。AlertInstance 已被恢复的，
+// 没有新行产生，旧 dismissed 行始终被过滤，达到「彻底隐藏」。
 func (a *AdminAPI) handleAlertIncidentDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeError(w, 405, "method not allowed")
@@ -682,7 +685,7 @@ func (a *AdminAPI) handleAlertIncidentDelete(w http.ResponseWriter, r *http.Requ
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	var rows []database.AlertHistory
 	if err := database.DB.Model(&database.AlertHistory{}).
-		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL AND dismissed_at IS NULL",
 			[]string{"firing", "resolved", "pending"}, since).
 		Order("occurred_at ASC").Limit(50000).Scan(&rows).Error; err != nil {
 		writeError(w, 500, "查询告警历史失败: "+err.Error())
@@ -695,9 +698,10 @@ func (a *AdminAPI) handleAlertIncidentDelete(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	now := time.Now()
+	// 只设 dismissed_at（不动 removed_at），让告警恢复后能再次显示
 	if err := database.DB.Model(&database.AlertHistory{}).
-		Where("fingerprint IN ? AND removed_at IS NULL", fps).
-		Update("removed_at", now).Error; err != nil {
+		Where("fingerprint IN ? AND dismissed_at IS NULL", fps).
+		Update("dismissed_at", now).Error; err != nil {
 		writeError(w, 500, "删除故障失败: "+err.Error())
 		return
 	}
@@ -738,7 +742,7 @@ func (a *AdminAPI) handleAlertNoiseTop(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	var rows []database.AlertHistory
 	if err := database.DB.Model(&database.AlertHistory{}).
-		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL AND dismissed_at IS NULL",
 			[]string{"firing", "resolved", "pending"}, since).
 		Order("occurred_at ASC").Limit(50000).Scan(&rows).Error; err != nil {
 		writeError(w, 500, "查询告警历史失败: "+err.Error())

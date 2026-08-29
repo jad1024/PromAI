@@ -323,3 +323,74 @@ func TestRemovedAtFilterInDedup(t *testing.T) {
 		t.Fatalf("删除后故障应为空，实际 %d", len(incsRemoved))
 	}
 }
+
+// TestDismissedIncidentReappearsOnNewEvent 验证事件聚合软 dismiss 语义：
+// 1) 旧 AlertHistory 标记 dismissed_at 后，聚合查询过滤后该故障消失
+// 2) 新告警事件到来（AlertHistory 新增一行，无 dismissed_at），dedup 取最新
+//    行后该故障自动重新出现
+// 3) 已恢复告警的 dismissed 行始终被过滤，达成彻底隐藏
+func TestDismissedIncidentReappearsOnNewEvent(t *testing.T) {
+	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	cfg := denoiseConfig{WindowMinutes: 60, StormThreshold: 10, ResourceLabels: []string{"resource"}}
+
+	// 场景 A: 用户删除一个 firing 故障 → 后续新告警事件让故障重新出现
+	dismissT := base.Add(10 * time.Minute)
+	newEventT := base.Add(20 * time.Minute)
+	rowsA := []database.AlertHistory{
+		histRow("fp-A", 1, 1, "Mysql主从延迟", "cluster-a", "firing", "critical", 100, mkInstanceLabels("node-1", "a"), base),
+	}
+	// dismissT 之前：1 个故障
+	if got := len(aggregateIncidents(dedupToAlerts(rowsA), cfg)); got != 1 {
+		t.Fatalf("A1: 预期 1 个故障，实际 %d", got)
+	}
+	// 用户点击删除：标记 dismissed_at，SQL 层过滤后该行不再参与聚合 → 0 个故障
+	rowA0 := rowsA[0]
+	rowA0.DismissedAt = &dismissT
+	afterDismiss := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowA0})), cfg)
+	if got := len(afterDismiss); got != 0 {
+		t.Fatalf("A2: 预期 dismiss 后 0 个故障，实际 %d", got)
+	}
+	// 新告警事件到来：插入一条新的 AlertHistory（无 dismissed_at）
+	rowA1 := histRow("fp-A", 1, 1, "Mysql主从延迟", "cluster-a", "firing", "critical", 110, mkInstanceLabels("node-1", "a"), newEventT)
+	rowsARefreshed := []database.AlertHistory{rowA0, rowA1}
+	reappear := aggregateIncidents(dedupToAlerts(filterDismissed(rowsARefreshed)), cfg)
+	if got := len(reappear); got != 1 {
+		t.Fatalf("A3: 预期新事件后故障重新出现为 1，实际 %d", got)
+	}
+
+	// 场景 B: 用户删除一个已恢复告警的故障 → 旧 dismissed 行永远不再出现
+	resolveT := base.Add(5 * time.Minute)
+	rowsB := []database.AlertHistory{
+		histRow("fp-B", 2, 2, "CPU高", "cluster-b", "firing", "warning", 90, mkInstanceLabels("node-2", "b"), base),
+		histRow("fp-B", 2, 2, "CPU高", "cluster-b", "resolved", "warning", 30, mkInstanceLabels("node-2", "b"), resolveT),
+	}
+	// dismiss 之前：故障已结束、存在
+	if got := len(aggregateIncidents(dedupToAlerts(rowsB), cfg)); got != 1 {
+		t.Fatalf("B1: 预期 1 个故障，实际 %d", got)
+	}
+	// dismiss 之后：过滤 dismissed 行
+	rowB0 := rowsB[0]
+	rowB0.DismissedAt = &dismissT
+	rowB1 := rowsB[1]
+	rowB1.DismissedAt = &dismissT
+	b2 := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowB0, rowB1})), cfg)
+	if got := len(b2); got != 0 {
+		t.Fatalf("B2: 预期已恢复且 dismiss 后 0 个故障，实际 %d", got)
+	}
+	// 没有新告警事件（已恢复），故障始终不出现
+	b3 := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowB0, rowB1})), cfg)
+	if got := len(b3); got != 0 {
+		t.Fatalf("B3: 预期已恢复告警 dismiss 后永远不出现，实际 %d", got)
+	}
+}
+
+// filterDismissed 模拟 SQL 层 `WHERE dismissed_at IS NULL` 过滤
+func filterDismissed(rows []database.AlertHistory) []database.AlertHistory {
+	out := make([]database.AlertHistory, 0, len(rows))
+	for _, r := range rows {
+		if r.DismissedAt == nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
