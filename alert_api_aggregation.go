@@ -199,26 +199,26 @@ func parseLabels(s string) map[string]string {
 
 // extractResource 从 labels 中按选中的键提取并拼接 resource 值；
 // 键按字典序排序保证稳定性；任一键缺失则该位空。
+// extractResource 按优先级从 labels 中提取 resource 值：
+//   1) 按配置的 resource 标签顺序（CSV 顺序即优先级）取第一个非空值；
+//   2) 全部未命中时回退到常见实例标签（instance/host/pod/node/target），
+//      避免同 alertname 且无 resource 标签的告警全部糊成一个大故障；
+//   3) 仍取不到则返回 ""（退化为仅按 alertname 聚合）。
 func extractResource(labels map[string]string, keys []string) string {
 	if len(keys) == 0 {
-		return ""
+		keys = []string{defaultDenoiseResourceLabels}
 	}
-	ks := append([]string(nil), keys...)
-	sort.Strings(ks)
-	parts := make([]string, 0, len(ks))
-	missing := 0
-	for _, k := range ks {
-		if v, ok := labels[k]; ok && v != "" {
-			parts = append(parts, v)
-		} else {
-			parts = append(parts, "-")
-			missing++
+	for _, k := range keys {
+		if v := labels[k]; v != "" {
+			return v
 		}
 	}
-	if missing == len(ks) {
-		return "" // 一个 resource 标签都没取到
+	for _, k := range []string{"instance", "host", "pod", "node", "target"} {
+		if v := labels[k]; v != "" {
+			return v
+		}
 	}
-	return strings.Join(parts, "|")
+	return ""
 }
 
 // incidentHashKey 故障的稳定 key（用于前端下钻）
