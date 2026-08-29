@@ -204,7 +204,7 @@ export const testAiModel = (model: {
 import type {
   AlertRule, AlertInstance, AlertHistoryRow, HistorySession, AlertSilence, AlertInhibit, AlertRoute,
   AlertGroup, AlertNotifyLog, AlertStats, EvaluatorStatus, TestRuleResult, TimelineGroup,
-  AlertEventAgg, AlertNoiseTop,
+  AlertIncidentList, AlertIncident, AlertNoiseTop, DenoiseConfig,
 } from '../types/alerting'
 
 export const getAlertRules = (params?: { keyword?: string; severity?: string; enabled?: string; origin?: string; source_type?: string; page?: number; page_size?: number }) =>
@@ -295,15 +295,24 @@ export const getAlertNotifyLogs = (params?: {
 export const getAlertStats = () => api.get<AlertStats>('/alert/stats')
 export const getAlertEvaluatorStatus = () => api.get<EvaluatorStatus>('/alert/evaluator/status')
 
-// ===== 告警事件聚合（分析级，不触碰通知链路） =====
-// 把 AlertHistory 原始事件流按「规则 + 数据源 + 时间窗」聚合为事件，
-// 用于事件视图、噪音排行，以及 AI 根因分析的上下文降噪。
-export const getAlertEvents = (params?: {
-  hours?: number; datasource_id?: number; severity?: string; rule_name?: string; keyword?: string; limit?: number
-}) => api.get<AlertEventAgg>('/alert/events', { params })
+// ===== 告警降噪聚合（分析级，不触碰通知链路） =====
+// AlertHistory → Alert（按 fingerprint 去重）→ Incident（按 alertname+resource 聚合）
+// 参考 FlashDuty/Nightingale 模型。通知层面的分组/去重/抑制由 Alertmanager 负责。
+export const getAlertIncidents = (params?: {
+  hours?: number; datasource_id?: number; severity?: string; alertname?: string; resource?: string;
+  window_minutes?: number; storm_threshold?: number; resource_labels?: string; limit?: number
+}) => api.get<AlertIncidentList>('/alert/incidents', { params })
 
-export const getAlertNoiseTop = (params?: { hours?: number; limit?: number }) =>
-  api.get<AlertNoiseTop>('/alert/noise-top', { params })
+export const getAlertIncidentDetail = (params: {
+  key: string; hours?: number; window_minutes?: number; storm_threshold?: number; resource_labels?: string
+}) => api.get<{ incident: AlertIncident; window_minutes: number }>('/alert/incidents/detail', { params })
+
+export const getAlertNoiseTop = (params?: {
+  hours?: number; limit?: number; window_minutes?: number; storm_threshold?: number; resource_labels?: string
+}) => api.get<AlertNoiseTop>('/alert/noise-top', { params })
+
+export const getDenoiseConfig = () => api.get<DenoiseConfig>('/alert/denoise-config')
+export const saveDenoiseConfig = (cfg: DenoiseConfig) => api.put<{ ok: boolean }>('/alert/denoise-config', cfg)
 
 // ===== 外部告警源（n9e / 华为云 / 通用 webhook） =====
 import type { ExternalAlertSource, ExternalRule, ExternalSyncResult } from '../types/alerting'

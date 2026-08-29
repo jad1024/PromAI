@@ -407,8 +407,10 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/alert/groups", logged(auth(a.handleAlertGroups)))
 	mux.HandleFunc("/api/promai/alert/notify-logs", logged(auth(a.handleAlertNotifyLogs)))
 	mux.HandleFunc("/api/promai/alert/stats", logged(auth(a.handleAlertStats)))
-	mux.HandleFunc("/api/promai/alert/events", logged(auth(a.handleAlertEvents)))
+	mux.HandleFunc("/api/promai/alert/incidents", logged(auth(a.handleAlertIncidents)))
+	mux.HandleFunc("/api/promai/alert/incidents/detail", logged(auth(a.handleAlertIncidentDetail)))
 	mux.HandleFunc("/api/promai/alert/noise-top", logged(auth(a.handleAlertNoiseTop)))
+	mux.HandleFunc("/api/promai/alert/denoise-config", logged(auth(a.handleAlertDenoiseConfig)))
 	mux.HandleFunc("/api/promai/alert/evaluator/status", logged(auth(a.handleAlertEvaluatorStatus)))
 
 	// ===== 外部告警接入（n9e / 华为云 CES / 通用 webhook） =============================

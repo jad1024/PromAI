@@ -320,50 +320,68 @@ export interface ExternalSyncResult {
   status: string
 }
 
-// ===== 告警事件聚合（分析级） =====
+// ===== 告警降噪聚合（分析级） =====
+// 参考 FlashDuty/Nightingale 模型：AlertHistory → Alert（按 fingerprint 去重） → Incident（按 alertname+resource 聚合）
 // 说明：通知层面的分组/去重/抑制由 Alertmanager 负责，PromAI 不做。
 // 这里仅做"分析级聚合"，用于人看懂告警、噪音治理与 AI 上下文降噪。
 
-export interface AlertEvent {
-  rule_id: number
-  rule_name: string
+export interface AlertInIncident {
+  time: string
+  state: string // ongoing | resolved
+  severity: string
+  value: number
+  threshold: number
   datasource_id: number
   datasource_name: string
+  labels: Record<string, string>
+  duration: string
+}
+
+export interface AlertIncident {
+  key: string
+  alertname: string
+  resource: string
   severity: string
   state: string // ongoing | resolved
+  alert_count: number
   first_fired_at: string
   last_event_at: string
-  firing_count: number
-  raw_count: number
-  flap_count: number
-  flapping: boolean
-  peak_value: number
-  threshold: number
-  // 同一规则在其他数据源上时间窗重叠的集群名（跨集群关联提示，非硬分组）
-  correlated_datasources: string[]
+  storm: boolean
+  datasources: string[]
+  alerts?: AlertInIncident[]
 }
 
-export interface AlertEventAgg {
-  events: AlertEvent[]
+export interface AlertIncidentList {
+  incidents: AlertIncident[]
   total_raw: number
-  total_events: number
+  total_alerts: number
+  total_incidents: number
   compression: number
-  window_hours: number
+  window_minutes: number
+  storm_threshold: number
+  resource_labels: string[]
 }
 
-export interface NoiseTopRule {
-  rule_id: number
-  rule_name: string
-  datasource_id: number
-  datasource_name: string
+export interface NoiseTopItem {
+  alertname: string
+  resource: string
+  alert_count: number
   severity: string
-  firing_count: number
-  flap_count: number
-  flapping: boolean
-  raw_count: number
+  state: string
+  storm: boolean
+  datasources: string[]
 }
 
 export interface AlertNoiseTop {
-  items: NoiseTopRule[]
+  items: NoiseTopItem[]
   window_hours: number
+  window_minutes: number
+  storm_threshold: number
+  resource_labels: string[]
+}
+
+export interface DenoiseConfig {
+  window_minutes: number
+  storm_threshold: number
+  resource_labels: string[]
 }
