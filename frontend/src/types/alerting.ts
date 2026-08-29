@@ -321,9 +321,10 @@ export interface ExternalSyncResult {
 }
 
 // ===== 告警降噪聚合（分析级） =====
-// 参考 FlashDuty/Nightingale 模型：AlertHistory → Alert（按 fingerprint 去重） → Incident（按 alertname+resource 聚合）
-// 说明：通知层面的分组/去重/抑制由 Alertmanager 负责，PromAI 不做。
-// 这里仅做"分析级聚合"，用于人看懂告警、噪音治理与 AI 上下文降噪。
+// 模型（参考 FlashDuty/Nightingale，按用户实际诉求简化）：
+//   AlertHistory → Alert（按 fingerprint 去重）→ Incident（按 alertname 在时间窗内聚合）
+// 同一 alertname 下的多个实例/集群告警归入同一故障，下钻时展示具体实例。
+// 通知层面的分组/去重/抑制由 Alertmanager 负责，PromAI 不做。
 
 export interface AlertInIncident {
   time: string
@@ -333,6 +334,8 @@ export interface AlertInIncident {
   threshold: number
   datasource_id: number
   datasource_name: string
+  // 该告警对应的实例标识（从 labels 中按 instance_labels 链提取）
+  instance: string
   labels: Record<string, string>
   duration: string
 }
@@ -340,10 +343,11 @@ export interface AlertInIncident {
 export interface AlertIncident {
   key: string
   alertname: string
-  resource: string
   severity: string
   state: string // ongoing | resolved
   alert_count: number
+  instance_count: number
+  cluster_count: number
   first_fired_at: string
   last_event_at: string
   storm: boolean
@@ -364,12 +368,14 @@ export interface AlertIncidentList {
 
 export interface NoiseTopItem {
   alertname: string
-  resource: string
   alert_count: number
+  instance_count: number
+  cluster_count: number
   severity: string
   state: string
   storm: boolean
   datasources: string[]
+  last_event_at: string
 }
 
 export interface AlertNoiseTop {

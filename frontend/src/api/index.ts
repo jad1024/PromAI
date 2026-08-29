@@ -296,10 +296,10 @@ export const getAlertStats = () => api.get<AlertStats>('/alert/stats')
 export const getAlertEvaluatorStatus = () => api.get<EvaluatorStatus>('/alert/evaluator/status')
 
 // ===== 告警降噪聚合（分析级，不触碰通知链路） =====
-// AlertHistory → Alert（按 fingerprint 去重）→ Incident（按 alertname+resource 聚合）
-// 参考 FlashDuty/Nightingale 模型。通知层面的分组/去重/抑制由 Alertmanager 负责。
+// AlertHistory → Alert（按 fingerprint 去重）→ Incident（按 alertname 在时间窗内聚合）
+// 参考 FlashDuty/Nightingale 模型（按用户诉求简化）。通知层面的分组/去重/抑制由 Alertmanager 负责。
 export const getAlertIncidents = (params?: {
-  hours?: number; datasource_id?: number; severity?: string; alertname?: string; resource?: string;
+  hours?: number; datasource_id?: number; severity?: string; alertname?: string; instance?: string;
   window_minutes?: number; storm_threshold?: number; resource_labels?: string; limit?: number
 }) => api.get<AlertIncidentList>('/alert/incidents', { params })
 

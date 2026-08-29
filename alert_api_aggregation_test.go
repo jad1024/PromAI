@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -24,14 +25,16 @@ func histRow(fp string, ruleID, dsID uint, rule, ds, state, sev string, v float6
 	}
 }
 
-func mkLabels(a, b string) string { return `{"resource":"` + a + `","cluster":"` + b + `"}` }
+func mkInstanceLabels(instance, cluster string) string {
+	return `{"instance":"` + instance + `","cluster":"` + cluster + `"}`
+}
 
 func TestDedupSameFingerprintRepeatFiring(t *testing.T) {
 	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	rows := []database.AlertHistory{
-		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 85, mkLabels("node-1", "a"), base),
-		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 92, mkLabels("node-1", "a"), base.Add(3*time.Minute)),
-		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "critical", 98, mkLabels("node-1", "a"), base.Add(6*time.Minute)),
+		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 85, mkInstanceLabels("node-1", "a"), base),
+		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 92, mkInstanceLabels("node-1", "a"), base.Add(3*time.Minute)),
+		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "critical", 98, mkInstanceLabels("node-1", "a"), base.Add(6*time.Minute)),
 	}
 	alerts := dedupToAlerts(rows)
 	if len(alerts) != 1 {
@@ -55,9 +58,9 @@ func TestDedupSameFingerprintRepeatFiring(t *testing.T) {
 func TestResolvedThenFiringCreatesNewAlert(t *testing.T) {
 	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	rows := []database.AlertHistory{
-		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 85, mkLabels("node-1", "a"), base),
-		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "resolved", "warning", 30, mkLabels("node-1", "a"), base.Add(10*time.Minute)),
-		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 88, mkLabels("node-1", "a"), base.Add(30*time.Minute)),
+		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 85, mkInstanceLabels("node-1", "a"), base),
+		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "resolved", "warning", 30, mkInstanceLabels("node-1", "a"), base.Add(10*time.Minute)),
+		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 88, mkInstanceLabels("node-1", "a"), base.Add(30*time.Minute)),
 	}
 	alerts := dedupToAlerts(rows)
 	if len(alerts) != 2 {
@@ -74,34 +77,70 @@ func TestResolvedThenFiringCreatesNewAlert(t *testing.T) {
 	}
 }
 
-func TestCrossClusterSameResourceSameIncident(t *testing.T) {
+func TestAggregateByAlertnameOnly(t *testing.T) {
+	// 关键模型验证：同一 alertname 多个实例归一故障，跨集群也归一
 	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	alerts := []alertInstance{
 		{
 			Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
 			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(2 * time.Minute),
-			PeakValue: 88, Threshold: 80, Labels: map[string]string{"resource": "node-1", "cluster": "a"},
+			PeakValue: 88, Threshold: 80, Labels: map[string]string{"instance": "10.0.0.1:9100", "cluster": "a"},
 		},
 		{
 			Fingerprint: "fp-b", RuleID: 1, RuleName: "CPU高", DatasourceID: 2, DatasourceName: "cluster-b",
 			Severity: "warning", State: "ongoing", FirstFiredAt: base.Add(1 * time.Minute), LastEventAt: base.Add(3 * time.Minute),
-			PeakValue: 90, Threshold: 80, Labels: map[string]string{"resource": "node-1", "cluster": "b"},
+			PeakValue: 90, Threshold: 80, Labels: map[string]string{"instance": "10.0.0.2:9100", "cluster": "b"},
+		},
+		{
+			Fingerprint: "fp-c", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
+			Severity: "critical", State: "ongoing", FirstFiredAt: base.Add(2 * time.Minute), LastEventAt: base.Add(4 * time.Minute),
+			PeakValue: 95, Threshold: 80, Labels: map[string]string{"instance": "10.0.0.3:9100", "cluster": "a"},
 		},
 	}
 	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
 	incs := aggregateIncidents(alerts, cfg)
 	if len(incs) != 1 {
-		t.Fatalf("跨集群相同 alertname+resource 应归入同一故障，实际 %d 个", len(incs))
+		t.Fatalf("同 alertname 多实例应归 1 个故障，实际 %d", len(incs))
 	}
 	inc := incs[0]
-	if inc.AlertCount != 2 {
-		t.Errorf("AlertCount 应为 2，实际 %d", inc.AlertCount)
+	if inc.AlertCount != 3 {
+		t.Errorf("AlertCount 应为 3，实际 %d", inc.AlertCount)
 	}
-	if len(inc.Datasources) != 2 || inc.Datasources[0] != "cluster-a" || inc.Datasources[1] != "cluster-b" {
-		t.Errorf("Datasources 应包含两个集群，实际 %v", inc.Datasources)
+	if inc.InstanceCount != 3 {
+		t.Errorf("InstanceCount 应为 3（10.0.0.1/2/3），实际 %d", inc.InstanceCount)
 	}
-	if len(inc.Alerts) != 2 {
-		t.Errorf("下钻 alerts 应为 2 条，实际 %d", len(inc.Alerts))
+	if inc.ClusterCount != 2 {
+		t.Errorf("ClusterCount 应为 2（cluster-a/b），实际 %d", inc.ClusterCount)
+	}
+	if len(inc.Datasources) != 2 {
+		t.Errorf("Datasources 应列出 2 个集群，实际 %v", inc.Datasources)
+	}
+	if inc.Severity != "critical" {
+		t.Errorf("Severity 应升级为 critical，实际 %s", inc.Severity)
+	}
+	if len(inc.Alerts) != 3 {
+		t.Errorf("下钻 alerts 应为 3 条，实际 %d", len(inc.Alerts))
+	}
+}
+
+func TestDifferentAlertnameDifferentIncident(t *testing.T) {
+	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	alerts := []alertInstance{
+		{
+			Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
+			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
+			Labels: map[string]string{"instance": "10.0.0.1:9100"},
+		},
+		{
+			Fingerprint: "fp-b", RuleID: 2, RuleName: "内存高", DatasourceID: 1, DatasourceName: "cluster-a",
+			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
+			Labels: map[string]string{"instance": "10.0.0.1:9100"},
+		},
+	}
+	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
+	incs := aggregateIncidents(alerts, cfg)
+	if len(incs) != 2 {
+		t.Fatalf("不同 alertname 应拆分为 2 个故障，实际 %d", len(incs))
 	}
 }
 
@@ -111,12 +150,12 @@ func TestWindowSlicing(t *testing.T) {
 		{
 			Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
 			Severity: "warning", State: "resolved", FirstFiredAt: base, LastEventAt: base.Add(5 * time.Minute),
-			PeakValue: 85, Threshold: 80, Labels: map[string]string{"resource": "node-1"},
+			Labels: map[string]string{"instance": "10.0.0.1:9100"},
 		},
 		{
 			Fingerprint: "fp-b", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
 			Severity: "warning", State: "ongoing", FirstFiredAt: base.Add(30 * time.Minute), LastEventAt: base.Add(31 * time.Minute),
-			PeakValue: 86, Threshold: 80, Labels: map[string]string{"resource": "node-1"},
+			Labels: map[string]string{"instance": "10.0.0.1:9100"},
 		},
 	}
 	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
@@ -140,98 +179,90 @@ func TestStormFlag(t *testing.T) {
 			Fingerprint: "fp-" + string(rune('a'+i)), RuleID: 1, RuleName: "连接数高", DatasourceID: uint(1 + i),
 			DatasourceName: "cluster", Severity: "warning", State: "ongoing",
 			FirstFiredAt: base.Add(time.Duration(i) * time.Minute), LastEventAt: base.Add(time.Duration(i+1) * time.Minute),
-			PeakValue: 200, Threshold: 100, Labels: map[string]string{"resource": "db-1", "pod": "p" + string(rune('a'+i))},
+			PeakValue: 200, Threshold: 100,
+			Labels: map[string]string{"instance": "10.0.0." + string(rune('1'+i)) + ":9100"},
 		})
 	}
 	cfg := denoiseConfig{WindowMinutes: 60, StormThreshold: 10, ResourceLabels: []string{"resource"}}
 	incs := aggregateIncidents(alerts, cfg)
 	if len(incs) != 1 {
-		t.Fatalf("同一窗口内应合并为 1 个故障，实际 %d", len(incs))
+		t.Fatalf("同一窗口同 alertname 应合并为 1 个故障，实际 %d", len(incs))
 	}
 	if !incs[0].Storm {
 		t.Error("告警数 12 > 阈值 10，应打风暴标记")
 	}
-}
-
-func TestDifferentResourceDifferentIncident(t *testing.T) {
-	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
-	alerts := []alertInstance{
-		{
-			Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
-			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
-			Labels: map[string]string{"resource": "node-1"},
-		},
-		{
-			Fingerprint: "fp-b", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
-			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
-			Labels: map[string]string{"resource": "node-2"},
-		},
-	}
-	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents(alerts, cfg)
-	if len(incs) != 2 {
-		t.Fatalf("不同 resource 应拆分为 2 个故障，实际 %d", len(incs))
+	if incs[0].InstanceCount != 12 {
+		t.Errorf("InstanceCount 应为 12，实际 %d", incs[0].InstanceCount)
 	}
 }
 
-func TestMultiResourceLabels(t *testing.T) {
-	// 配置多个 resource 标签时，按 CSV 顺序取第一个非空值（优先级）
-	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
-	a := alertInstance{
-		Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
-		Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
-		Labels: map[string]string{"instance": "10.0.0.1:9100", "pod": "app-abc"},
+func TestExtractInstancePriority(t *testing.T) {
+	// 优先级：resource > instance
+	labels := map[string]string{"resource": "db-prod", "instance": "10.0.0.1:9100"}
+	got := extractInstance(labels, []string{"resource", "instance"})
+	if got != "db-prod" {
+		t.Errorf("应按顺序取 resource=db-prod，实际 %q", got)
 	}
-	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"pod", "instance"}}
-	incs := aggregateIncidents([]alertInstance{a}, cfg)
-	if len(incs) != 1 {
-		t.Fatalf("应产生 1 个故障")
+	// 优先级：pod > instance（pod 缺失，回退 instance）
+	labels = map[string]string{"instance": "10.0.0.1:9100"}
+	got = extractInstance(labels, []string{"pod", "instance"})
+	if got != "10.0.0.1:9100" {
+		t.Errorf("应回退到 instance，实际 %q", got)
 	}
-	if incs[0].Resource != "app-abc" {
-		t.Errorf("resource 应按优先级取 pod=app-abc，实际 %q", incs[0].Resource)
-	}
-}
-
-func TestResourceFallbackToInstance(t *testing.T) {
-	// 默认配置只有 resource 标签，而规则通常只带 instance —— 应回退到 instance，
-	// 避免同 alertname 的告警全部糊成一个大故障
-	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
-	alerts := []alertInstance{
-		{
-			Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
-			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
-			Labels: map[string]string{"instance": "10.0.0.1:9100"},
-		},
-		{
-			Fingerprint: "fp-b", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
-			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
-			Labels: map[string]string{"instance": "10.0.0.2:9100"},
-		},
-	}
-	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents(alerts, cfg)
-	if len(incs) != 2 {
-		t.Fatalf("无 resource 标签时应回退 instance 拆分故障，实际 %d 个", len(incs))
-	}
-	if incs[0].Resource != "10.0.0.1:9100" || incs[1].Resource != "10.0.0.2:9100" {
-		t.Errorf("回退后的 resource 应为 instance 值，实际 %q / %q", incs[0].Resource, incs[1].Resource)
+	// 全缺失
+	labels = map[string]string{"namespace": "default"}
+	got = extractInstance(labels, []string{"resource"})
+	if got != "" {
+		t.Errorf("应为空串，实际 %q", got)
 	}
 }
 
-func TestResourceMissingFallbackEmpty(t *testing.T) {
-	// 配置的与回退链都不命中时，退化为仅按 alertname 聚合（resource=""）
+func TestIncidentHashKeyStable(t *testing.T) {
 	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
-	a := alertInstance{
-		Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
-		Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(1 * time.Minute),
-		Labels: map[string]string{"namespace": "default"},
+	k1 := incidentHashKey("CPU高", base)
+	k2 := incidentHashKey("CPU高", base)
+	if k1 != k2 {
+		t.Errorf("相同输入应产生相同 hash，实际 %s vs %s", k1, k2)
 	}
-	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents([]alertInstance{a}, cfg)
-	if len(incs) != 1 {
-		t.Fatalf("应产生 1 个故障")
+	k3 := incidentHashKey("内存高", base)
+	if k1 == k3 {
+		t.Error("不同 alertname 应产生不同 hash")
 	}
-	if incs[0].Resource != "" {
-		t.Errorf("resource 应为空串，实际 %q", incs[0].Resource)
+	k4 := incidentHashKey("CPU高", base.Add(time.Minute))
+	if k1 == k4 {
+		t.Error("不同 firstFiredAt 应产生不同 hash")
+	}
+}
+
+func TestIncidentDetailFullJSONTags(t *testing.T) {
+	// 回归：确保 incidentDetailFull 序列化字段为小写（下钻抽屉不能 undefined）
+	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	inc := incidentDetailFull{
+		Key:          "abc123",
+		Alertname:    "CPU高",
+		Severity:     "warning",
+		State:        "ongoing",
+		AlertCount:   5,
+		InstanceSet:  map[string]struct{}{},
+		Alerts:       []alertInIncident{},
+		FirstFiredAt: base,
+		LastEventAt:  base.Add(5 * time.Minute),
+		Datasources:  []string{"cluster-a"},
+	}
+	b, err := json.Marshal(inc)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	for _, k := range []string{"key", "alertname", "severity", "state", "alert_count", "alerts", "first_fired_at", "last_event_at", "datasources"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("JSON 输出应包含小写字段 %q，实际: %s", k, string(b))
+		}
+	}
+	if _, ok := got["InstanceSet"]; ok {
+		t.Error("InstanceSet 不应出现在 JSON 输出中")
 	}
 }
