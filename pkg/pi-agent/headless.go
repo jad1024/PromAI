@@ -319,7 +319,7 @@ func (h *AgentHandler) fetchCrossClusterAlerts(instances []database.AlertInstanc
 	var flapRows []flapRow
 	if err := h.db.Model(&database.AlertHistory{}).
 		Select("rule_id, datasource_id, event_type, count(*) as cnt").
-		Where("rule_id IN ? AND datasource_id IN ? AND event_type IN ? AND COALESCE(occurred_at, created_at) >= ?",
+		Where("rule_id IN ? AND datasource_id IN ? AND event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
 			ruleIDs, allDsIDs, []string{"firing", "resolved"}, cutoff).
 		Group("rule_id, datasource_id, event_type").Scan(&flapRows).Error; err == nil {
 		// 触发与恢复成对出现才可能震荡，用较小的一侧作为来回次数下界

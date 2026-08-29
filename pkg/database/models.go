@@ -437,23 +437,27 @@ type AlertInstance struct {
 
 // AlertHistory 告警状态变迁追加表，单条事件不可变
 type AlertHistory struct {
-	ID              uint      `gorm:"primaryKey" json:"id"`
-	Fingerprint     string    `gorm:"index;size:64" json:"fingerprint"`
-	RuleID          uint      `gorm:"index" json:"rule_id"`
-	RuleName        string    `gorm:"size:200" json:"rule_name"`
-	DatasourceID    uint      `gorm:"index" json:"datasource_id"`
-	DatasourceName  string    `gorm:"size:200" json:"datasource_name"`
-	State           string    `gorm:"size:20;index" json:"state"`
-	Severity        string    `gorm:"size:20;index" json:"severity"`
-	Value           float64   `json:"value"`
-	Threshold       float64   `json:"threshold"`
-	LabelsJSON      string    `gorm:"type:text" json:"labels_json"`
-	AnnotationsJSON string    `gorm:"type:text" json:"annotations_json"`
-	EventType       string    `gorm:"size:20;index" json:"event_type"`  // pending/firing/resolved/silenced/inhibited/notified
-	NotifyChannels  string    `gorm:"type:text" json:"notify_channels"` // 通知渠道 JSON: [{"id":1,"type":"wechat_work","name":"企业微信"}]
-	NotifyResult    string    `gorm:"size:20" json:"notify_result"`     // 通知结果: success/failed/throttled
-	OccurredAt      time.Time `gorm:"index" json:"occurred_at"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              uint       `gorm:"primaryKey" json:"id"`
+	Fingerprint     string     `gorm:"index;size:64" json:"fingerprint"`
+	RuleID          uint       `gorm:"index" json:"rule_id"`
+	RuleName        string     `gorm:"size:200" json:"rule_name"`
+	DatasourceID    uint       `gorm:"index" json:"datasource_id"`
+	DatasourceName  string     `gorm:"size:200" json:"datasource_name"`
+	State           string     `gorm:"size:20;index" json:"state"`
+	Severity        string     `gorm:"size:20;index" json:"severity"`
+	Value           float64    `json:"value"`
+	Threshold       float64    `json:"threshold"`
+	LabelsJSON      string     `gorm:"type:text" json:"labels_json"`
+	AnnotationsJSON string     `gorm:"type:text" json:"annotations_json"`
+	EventType       string     `gorm:"size:20;index" json:"event_type"`  // pending/firing/resolved/silenced/inhibited/notified
+	NotifyChannels  string     `gorm:"type:text" json:"notify_channels"` // 通知渠道 JSON: [{"id":1,"type":"wechat_work","name":"企业微信"}]
+	NotifyResult    string     `gorm:"size:20" json:"notify_result"`     // 通知结果: success/failed/throttled
+	OccurredAt      time.Time  `gorm:"index" json:"occurred_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	// RemovedAt 手动删除标记：用户手动删除实时告警或聚合故障时置位（软删），
+	// 所有读取侧统一过滤 removed_at IS NULL。刻意不用 gorm.DeletedAt，
+	// 保持 handleAlertHistory 的 DELETE 仍为物理删除。
+	RemovedAt *time.Time `gorm:"index" json:"removed_at,omitempty"`
 }
 
 // AlertSilence 静默规则

@@ -307,6 +307,10 @@ export const getAlertIncidentDetail = (params: {
   key: string; hours?: number; window_minutes?: number; storm_threshold?: number; resource_labels?: string
 }) => api.get<{ incident: AlertIncident; window_minutes: number }>('/alert/incidents/detail', { params })
 
+export const deleteAlertIncidents = (keys: string[], params?: {
+  hours?: number; window_minutes?: number; storm_threshold?: number; resource_labels?: string
+}) => api.post<{ ok: boolean; matched: number; fingerprints: number }>('/alert/incidents/delete', { keys }, { params })
+
 export const getAlertNoiseTop = (params?: {
   hours?: number; limit?: number; window_minutes?: number; storm_threshold?: number; resource_labels?: string
 }) => api.get<AlertNoiseTop>('/alert/noise-top', { params })

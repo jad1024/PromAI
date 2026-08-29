@@ -380,7 +380,7 @@ func (a *AdminAPI) handleAlertInstanceByFP(w http.ResponseWriter, r *http.Reques
 	}
 	// 取最近 50 条历史
 	var hist []database.AlertHistory
-	database.DB.Where("fingerprint = ?", fp).
+	database.DB.Where("fingerprint = ? AND removed_at IS NULL", fp).
 		Order("occurred_at desc").Limit(50).Find(&hist)
 	// 取该分组下最近 50 条通知日志（通知去向 + 结果）
 	var notifyLogs []database.AlertNotifyLog
@@ -545,7 +545,7 @@ func (a *AdminAPI) handleAlertHistory(w http.ResponseWriter, r *http.Request) {
 
 func (a *AdminAPI) handleAlertHistoryQuery(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
-	q := database.DB.Model(&database.AlertHistory{})
+	q := database.DB.Model(&database.AlertHistory{}).Where("removed_at IS NULL")
 	if v := params.Get("rule_id"); v != "" {
 		q = q.Where("rule_id = ?", v)
 	}
@@ -610,7 +610,7 @@ func (a *AdminAPI) handleAlertHistoryRuleNames(w http.ResponseWriter, r *http.Re
 	var rows []nameRow
 	database.DB.Model(&database.AlertHistory{}).
 		Select("rule_name, count(*) as count").
-		Where("rule_name != ''").
+		Where("rule_name != '' AND removed_at IS NULL").
 		Group("rule_name").Order("count desc").Limit(500).Scan(&rows)
 	names := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -658,7 +658,7 @@ func (a *AdminAPI) handleAlertHistorySessions(w http.ResponseWriter, r *http.Req
 	// 避免 MAX() 返回 NULL 被扫描成零值时间（前端显示 0001-01-01）。
 	q := database.DB.Model(&database.AlertHistory{}).
 		Select("fingerprint, MAX(COALESCE(occurred_at, created_at)) as resolved_at").
-		Where("event_type = ?", "resolved")
+		Where("event_type = ? AND removed_at IS NULL", "resolved")
 	if v := params.Get("rule_id"); v != "" {
 		q = q.Where("rule_id = ?", v)
 	}
@@ -864,7 +864,7 @@ func (a *AdminAPI) handleAlertHistoryTimeline(w http.ResponseWriter, r *http.Req
 	}
 	params := r.URL.Query()
 
-	q := database.DB.Model(&database.AlertHistory{})
+	q := database.DB.Model(&database.AlertHistory{}).Where("removed_at IS NULL")
 	if v := params.Get("rule_id"); v != "" {
 		q = q.Where("rule_id = ?", v)
 	}
@@ -1125,7 +1125,7 @@ func (a *AdminAPI) handleAlertStats(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().Add(-24 * time.Hour)
 	database.DB.Model(&database.AlertHistory{}).
 		Select("strftime('%Y-%m-%d %H:00', occurred_at) as hour, count(*) as count").
-		Where("event_type = ? AND occurred_at >= ?", "firing", since).
+		Where("event_type = ? AND occurred_at >= ? AND removed_at IS NULL", "firing", since).
 		Group("hour").Order("hour asc").Scan(&trend)
 
 	// 24h 趋势（按来源细分：外部告警=告警源名，本地告警=数据源名）
@@ -1137,7 +1137,7 @@ func (a *AdminAPI) handleAlertStats(w http.ResponseWriter, r *http.Request) {
 	var trendBySource []srcBucket
 	database.DB.Model(&database.AlertHistory{}).
 		Select("strftime('%Y-%m-%d %H:00', occurred_at) as hour, COALESCE(NULLIF(datasource_name,''),'本地') as source, count(*) as count").
-		Where("event_type = ? AND occurred_at >= ?", "firing", since).
+		Where("event_type = ? AND occurred_at >= ? AND removed_at IS NULL", "firing", since).
 		Group("hour, source").Order("hour asc").Scan(&trendBySource)
 
 	// 未读总数（只统计活跃实例，resolved 后不应再显示红点）
@@ -1150,9 +1150,9 @@ func (a *AdminAPI) handleAlertStats(w http.ResponseWriter, r *http.Request) {
 	// 已恢复统计（实例 resolved 后会被清理，从历史表统计更稳定）
 	var resolvedCount24h, resolvedTotal int64
 	database.DB.Model(&database.AlertHistory{}).
-		Where("event_type = ?", "resolved").Count(&resolvedTotal)
+		Where("event_type = ? AND removed_at IS NULL", "resolved").Count(&resolvedTotal)
 	database.DB.Model(&database.AlertHistory{}).
-		Where("event_type = ? AND occurred_at >= ?", "resolved", since).
+		Where("event_type = ? AND occurred_at >= ? AND removed_at IS NULL", "resolved", since).
 		Count(&resolvedCount24h)
 
 	writeJSON(w, map[string]interface{}{

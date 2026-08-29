@@ -266,3 +266,60 @@ func TestIncidentDetailFullJSONTags(t *testing.T) {
 		t.Error("InstanceSet 不应出现在 JSON 输出中")
 	}
 }
+
+func TestCollectIncidentFingerprints(t *testing.T) {
+	// 删除故障：按 key 匹配，收集故障内所有去重指纹
+	incs := []incidentDetailFull{
+		{
+			Key: "key-1", Alertname: "CPU高",
+			Alerts: []alertInIncident{
+				{Fingerprint: "fp-a"},
+				{Fingerprint: "fp-b"},
+				{Fingerprint: "fp-a"}, // 同指纹去重
+			},
+		},
+		{
+			Key: "key-2", Alertname: "内存高",
+			Alerts: []alertInIncident{
+				{Fingerprint: "fp-c"},
+			},
+		},
+	}
+	fps, matched := collectIncidentFingerprints(incs, []string{"key-1"})
+	if matched != 1 {
+		t.Fatalf("应匹配 1 个故障，实际 %d", matched)
+	}
+	if len(fps) != 2 || fps[0] != "fp-a" || fps[1] != "fp-b" {
+		t.Errorf("应收集去重后 [fp-a fp-b]，实际 %v", fps)
+	}
+	// 多 key
+	fps2, matched2 := collectIncidentFingerprints(incs, []string{"key-1", "key-2"})
+	if matched2 != 2 || len(fps2) != 3 {
+		t.Errorf("多 key 应匹配 2 故障 3 指纹，实际 matched=%d fps=%v", matched2, fps2)
+	}
+	// 不存在的 key
+	_, matched3 := collectIncidentFingerprints(incs, []string{"nope"})
+	if matched3 != 0 {
+		t.Errorf("不存在的 key 应匹配 0，实际 %d", matched3)
+	}
+}
+
+func TestRemovedAtFilterInDedup(t *testing.T) {
+	// 软删语义：removed 的 fingerprint 不应再产出告警。
+	// dedupToAlerts 本身接收行数据（过滤在 SQL 层），这里验证被过滤后
+	// 聚合结果为空——模拟"手动删除实时告警 → 聚合消失"。
+	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	rows := []database.AlertHistory{
+		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 85, mkInstanceLabels("node-1", "a"), base),
+	}
+	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
+	incs := aggregateIncidents(dedupToAlerts(rows), cfg)
+	if len(incs) != 1 {
+		t.Fatalf("删除前应有 1 个故障，实际 %d", len(incs))
+	}
+	// 模拟 removed_at 过滤：行被过滤掉（SQL 层 WHERE removed_at IS NULL）
+	incsRemoved := aggregateIncidents(dedupToAlerts(nil), cfg)
+	if len(incsRemoved) != 0 {
+		t.Fatalf("删除后故障应为空，实际 %d", len(incsRemoved))
+	}
+}

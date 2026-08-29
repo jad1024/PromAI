@@ -148,6 +148,16 @@
                 </div>
                 <el-icon class="expand-caret"><Right /></el-icon>
               </div>
+              <el-button
+                class="inc-delete"
+                size="small"
+                text
+                type="danger"
+                title="删除该故障（同步清除其告警历史，不可恢复）"
+                @click.stop="confirmDelete(inc)"
+              >
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </div>
             <div v-if="inc.datasources.length > 0" class="inc-meta">
               <span class="meta-label">涉及集群：</span>
@@ -258,6 +268,30 @@
       </div>
     </el-drawer>
 
+    <!-- 删除故障确认对话框 -->
+    <el-dialog v-model="deleteOpen" title="删除故障" width="480px" :close-on-click-modal="false">
+      <div v-if="pendingDelete" class="delete-confirm">
+        <p class="dc-warn">
+          <el-icon><WarningFilled /></el-icon>
+          此操作不可恢复！
+        </p>
+        <p class="dc-target"><b>{{ pendingDelete.alertname }}</b></p>
+        <p class="dc-detail">
+          {{ pendingDelete.alert_count }} 条告警 · {{ pendingDelete.instance_count }} 个实例
+          <span v-if="pendingDelete.cluster_count > 1"> · 跨 {{ pendingDelete.cluster_count }} 集群</span>
+          <span v-if="pendingDelete.storm"> · 风暴</span>
+        </p>
+        <p class="dc-note">
+          将同步清除该故障涉及的所有告警历史记录（软删除），聚合列表和历史页都不会再显示。
+          手动删除没有恢复记录，删除后不可恢复。
+        </p>
+      </div>
+      <template #footer>
+        <el-button @click="deleteOpen = false">取消</el-button>
+        <el-button type="danger" :loading="deleting" @click="doDelete">确认删除</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 降噪配置对话框 -->
     <el-dialog v-model="settingsOpen" title="降噪配置" width="520px" :close-on-click-modal="false">
       <el-form :model="cfg" label-width="120px" label-position="right">
@@ -288,7 +322,7 @@ import * as echarts from 'echarts'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import {
-  getAlertIncidents, getAlertIncidentDetail, getAlertNoiseTop,
+  getAlertIncidents, getAlertIncidentDetail, getAlertNoiseTop, deleteAlertIncidents,
   getDenoiseConfig, saveDenoiseConfig, getAllDataSources,
 } from '../api'
 import type { AlertIncident, NoiseTopItem, DenoiseConfig } from '../types/alerting'
@@ -318,6 +352,11 @@ const filters = ref<{ severity: string; datasource_id: number | ''; alertname: s
 const drawerOpen = ref(false)
 const detailLoading = ref(false)
 const detail = ref<AlertIncident | null>(null)
+
+// 删除故障
+const deleteOpen = ref(false)
+const deleting = ref(false)
+const pendingDelete = ref<AlertIncident | null>(null)
 
 // 配置
 const settingsOpen = ref(false)
@@ -623,6 +662,27 @@ async function openDetail(inc: AlertIncident) {
 
 function openSettings() { settingsOpen.value = true }
 
+function confirmDelete(inc: AlertIncident) {
+  pendingDelete.value = inc
+  deleteOpen.value = true
+}
+
+async function doDelete() {
+  if (!pendingDelete.value) return
+  deleting.value = true
+  try {
+    const r = await deleteAlertIncidents([pendingDelete.value.key], { hours: hours.value })
+    ElMessage.success(`已删除故障（${r.data.matched} 个故障，清除 ${r.data.fingerprints} 条告警历史）`)
+    deleteOpen.value = false
+    pendingDelete.value = null
+    await fetchAll()
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + (e?.message || e))
+  } finally {
+    deleting.value = false
+  }
+}
+
 async function saveConfig() {
   savingConfig.value = true
   try {
@@ -716,6 +776,8 @@ onBeforeUnmount(() => {
 .inc-title { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 1; }
 .inc-alertname { font-weight: 600; font-size: 14px; color: var(--el-text-color-primary); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inc-times { display: flex; gap: 14px; align-items: center; flex-shrink: 0; }
+.inc-delete { flex-shrink: 0; opacity: 0; transition: opacity 0.15s; margin-top: -4px; }
+.incident-row:hover .inc-delete { opacity: 1; }
 .time-item { display: flex; flex-direction: column; gap: 2px; }
 .time-label { font-size: 10px; color: var(--el-text-color-secondary); }
 .time-value { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--el-text-color-primary); }
@@ -760,4 +822,10 @@ onBeforeUnmount(() => {
 .label-chip { background: var(--el-fill-color, #e2e8f0); padding: 1px 6px; border-radius: 3px; font-size: 10px; color: var(--el-text-color-secondary); font-family: ui-monospace, monospace; }
 
 .form-hint { font-size: 11px; color: var(--el-text-color-secondary); margin-top: 4px; line-height: 1.4; }
+
+.delete-confirm { padding: 4px 8px; }
+.dc-warn { display: flex; align-items: center; gap: 6px; color: #dc2626; font-weight: 500; font-size: 14px; margin: 0 0 8px; }
+.dc-target { font-size: 15px; font-weight: 600; margin: 0 0 6px; color: var(--el-text-color-primary); }
+.dc-detail { font-size: 13px; color: var(--el-text-color-regular); margin: 0 0 10px; }
+.dc-note { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; margin: 0; padding: 8px 10px; background: var(--el-fill-color-light, #f8fafc); border-radius: 4px; }
 </style>

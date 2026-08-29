@@ -759,6 +759,14 @@ func (a *AdminAPI) handleAlertInstanceBatch(w http.ResponseWriter, r *http.Reque
 				errs = append(errs, fp[:12]+": "+err.Error())
 				continue
 			}
+			// 手动删除实时告警：没有恢复记录，同步软删该 fingerprint 的历史事件，
+			// 聚合故障随之消失（removed_at IS NULL 过滤）。
+			if err := database.DB.Model(&database.AlertHistory{}).
+				Where("fingerprint = ? AND removed_at IS NULL", fp).
+				Update("removed_at", now).Error; err != nil {
+				errs = append(errs, fp[:12]+": "+err.Error())
+				continue
+			}
 		case "resolve":
 			if inst.State == "firing" || inst.State == "pending" {
 				if err := database.DB.Model(&database.AlertInstance{}).Where("id = ?", inst.ID).

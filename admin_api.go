@@ -409,6 +409,7 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/alert/stats", logged(auth(a.handleAlertStats)))
 	mux.HandleFunc("/api/promai/alert/incidents", logged(auth(a.handleAlertIncidents)))
 	mux.HandleFunc("/api/promai/alert/incidents/detail", logged(auth(a.handleAlertIncidentDetail)))
+	mux.HandleFunc("/api/promai/alert/incidents/delete", logged(auth(a.handleAlertIncidentDelete)))
 	mux.HandleFunc("/api/promai/alert/noise-top", logged(auth(a.handleAlertNoiseTop)))
 	mux.HandleFunc("/api/promai/alert/denoise-config", logged(auth(a.handleAlertDenoiseConfig)))
 	mux.HandleFunc("/api/promai/alert/evaluator/status", logged(auth(a.handleAlertEvaluatorStatus)))

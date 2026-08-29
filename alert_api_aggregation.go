@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -76,6 +77,7 @@ type alertInIncident struct {
 	Instance       string            `json:"instance"` // 该告警对应的实例标识
 	Labels         map[string]string `json:"labels"`
 	Duration       string            `json:"duration"`
+	Fingerprint    string            `json:"-"` // 内部使用：删除故障时反查指纹
 }
 
 // incidentListItem 列表项（不含 alerts 数组，控制响应体积）
@@ -403,6 +405,7 @@ func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig) []incidentDet
 			Instance:       inst,
 			Labels:         a.Labels,
 			Duration:       formatDuration(a.LastEventAt.Sub(a.FirstFiredAt).Milliseconds()),
+			Fingerprint:    a.Fingerprint,
 		})
 		if inst != "" {
 			inc.InstanceSet[inst] = struct{}{}
@@ -501,7 +504,7 @@ func (a *AdminAPI) handleAlertIncidents(w http.ResponseWriter, r *http.Request) 
 
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	q := database.DB.Model(&database.AlertHistory{}).
-		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ?",
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
 			[]string{"firing", "resolved", "pending"}, since)
 	if dsID > 0 {
 		q = q.Where("datasource_id = ?", dsID)
@@ -598,7 +601,7 @@ func (a *AdminAPI) handleAlertIncidentDetail(w http.ResponseWriter, r *http.Requ
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	var rows []database.AlertHistory
 	if err := database.DB.Model(&database.AlertHistory{}).
-		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ?",
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
 			[]string{"firing", "resolved", "pending"}, since).
 		Order("occurred_at ASC").Limit(50000).Scan(&rows).Error; err != nil {
 		writeError(w, 500, "查询告警历史失败: "+err.Error())
@@ -616,6 +619,94 @@ func (a *AdminAPI) handleAlertIncidentDetail(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	writeError(w, 404, "故障不存在或已过期")
+}
+
+// collectIncidentFingerprints 按 key 匹配故障，收集故障内所有去重 fingerprint。
+// 返回 (指纹列表, 匹配到的故障数)。
+func collectIncidentFingerprints(all []incidentDetailFull, keys []string) ([]string, int) {
+	want := map[string]bool{}
+	for _, k := range keys {
+		want[k] = true
+	}
+	fps := []string{}
+	seen := map[string]bool{}
+	matched := 0
+	for _, inc := range all {
+		if !want[inc.Key] {
+			continue
+		}
+		matched++
+		for _, a := range inc.Alerts {
+			if a.Fingerprint != "" && !seen[a.Fingerprint] {
+				seen[a.Fingerprint] = true
+				fps = append(fps, a.Fingerprint)
+			}
+		}
+	}
+	return fps, matched
+}
+
+// handleAlertIncidentDelete POST /api/promai/alert/incidents/delete
+// 删除聚合故障（软删）：把故障内所有告警对应的 AlertHistory 标记 removed_at，
+// 聚合与历史随即不再出现。手动删除无恢复记录，故删除不可逆（与实时告警删除语义一致）。
+func (a *AdminAPI) handleAlertIncidentDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	p := r.URL.Query()
+	hours, _ := strconv.Atoi(p.Get("hours"))
+	if hours <= 0 || hours > 24*30 {
+		hours = 24
+	}
+	wm, _ := strconv.Atoi(p.Get("window_minutes"))
+	st, _ := strconv.Atoi(p.Get("storm_threshold"))
+	rl := splitCSV(p.Get("resource_labels"))
+	cfg := resolveDenoiseParams(denoiseConfig{
+		WindowMinutes:  wm,
+		StormThreshold: st,
+		ResourceLabels: rl,
+	})
+
+	var body struct {
+		Keys []string `json:"keys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, 400, "请求体格式错误: "+err.Error())
+		return
+	}
+	if len(body.Keys) == 0 {
+		writeError(w, 400, "keys 不能为空")
+		return
+	}
+	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	var rows []database.AlertHistory
+	if err := database.DB.Model(&database.AlertHistory{}).
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
+			[]string{"firing", "resolved", "pending"}, since).
+		Order("occurred_at ASC").Limit(50000).Scan(&rows).Error; err != nil {
+		writeError(w, 500, "查询告警历史失败: "+err.Error())
+		return
+	}
+	all := aggregateIncidents(dedupToAlerts(rows), cfg)
+	fps, matched := collectIncidentFingerprints(all, body.Keys)
+	if matched == 0 {
+		writeError(w, 404, "故障不存在或已过期")
+		return
+	}
+	now := time.Now()
+	if err := database.DB.Model(&database.AlertHistory{}).
+		Where("fingerprint IN ? AND removed_at IS NULL", fps).
+		Update("removed_at", now).Error; err != nil {
+		writeError(w, 500, "删除故障失败: "+err.Error())
+		return
+	}
+	auditLog("alert_incident_delete", fmt.Sprintf("keys=%d 故障, fingerprints=%d 条", matched, len(fps)))
+	writeJSON(w, map[string]interface{}{
+		"ok":           true,
+		"matched":      matched,
+		"fingerprints": len(fps),
+	})
 }
 
 // handleAlertNoiseTop GET /api/promai/alert/noise-top
@@ -647,7 +738,7 @@ func (a *AdminAPI) handleAlertNoiseTop(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	var rows []database.AlertHistory
 	if err := database.DB.Model(&database.AlertHistory{}).
-		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ?",
+		Where("event_type IN ? AND COALESCE(occurred_at, created_at) >= ? AND removed_at IS NULL",
 			[]string{"firing", "resolved", "pending"}, since).
 		Order("occurred_at ASC").Limit(50000).Scan(&rows).Error; err != nil {
 		writeError(w, 500, "查询告警历史失败: "+err.Error())
