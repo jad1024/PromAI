@@ -44,12 +44,21 @@
             <span v-else class="muted">全部</span>
           </template>
         </el-table-column>
-        <el-table-column label="LTS 检索" width="200">
+        <el-table-column label="LTS 检索" width="210">
           <template #default="{ row }">
             <div class="lts-cell">
-              <div>组: <el-tooltip :content="row.log_group_id" placement="top" :disabled="!row.log_group_id"><span class="mono">{{ truncate(row.log_group_id, 12) }}</span></el-tooltip></div>
-              <div>流: <el-tooltip :content="row.log_stream_id" placement="top" :disabled="!row.log_stream_id"><span class="mono">{{ truncate(row.log_stream_id, 12) }}</span></el-tooltip></div>
-              <div class="lts-meta">{{ row.time_window_minutes }}min · {{ row.level_filter || 'ERROR,FATAL' }}</div>
+              <div class="lts-cell-line"><span class="lts-label">组</span><el-tooltip :content="row.log_group_id" placement="top" :disabled="!row.log_group_id"><span class="mono">{{ truncate(row.log_group_id, 16) }}</span></el-tooltip></div>
+              <div class="lts-cell-line"><span class="lts-label">流</span><el-tooltip :content="row.log_stream_id" placement="top" :disabled="!row.log_stream_id"><span class="mono">{{ truncate(row.log_stream_id, 16) }}</span></el-tooltip></div>
+              <div class="lts-cell-line lts-meta">
+                <span>{{ row.time_window_minutes }}min</span>
+                <span class="dot-sep">·</span>
+                <span>{{ row.level_filter || 'ERROR,FATAL' }}</span>
+                <span class="dot-sep">·</span>
+                <span>{{ row.limit }} 行</span>
+              </div>
+              <div v-if="row.keywords" class="lts-cell-line lts-kw">
+                <el-tooltip :content="'关键字：' + row.keywords" placement="top"><span>🔍 {{ truncate(row.keywords, 16) }}</span></el-tooltip>
+              </div>
             </div>
           </template>
         </el-table-column>
@@ -134,29 +143,38 @@
         </el-button>
 
         <h4 class="form-section-title">LTS 日志检索配置</h4>
-        <div class="form-row">
-          <el-form-item label="日志组 ID" prop="log_group_id" class="form-grow">
-            <el-input v-model="form.log_group_id" placeholder="LTS 日志组 ID" />
-          </el-form-item>
-          <el-form-item label="日志流 ID" prop="log_stream_id" class="form-grow">
-            <el-input v-model="form.log_stream_id" placeholder="LTS 日志流 ID" />
-          </el-form-item>
-        </div>
-        <div class="form-row">
-          <el-form-item label="时间窗（分钟）">
-            <el-input-number v-model="form.time_window_minutes" :min="1" :max="1440" style="width: 140px;" />
-          </el-form-item>
-          <el-form-item label="拉取上限（行）">
-            <el-input-number v-model="form.limit" :min="50" :max="5000" :step="50" style="width: 140px;" />
-          </el-form-item>
-        </div>
-        <div class="form-row">
-          <el-form-item label="级别过滤">
-            <el-input v-model="form.level_filter" placeholder="ERROR,FATAL" style="width: 180px;" />
-          </el-form-item>
-          <el-form-item label="附加关键字">
-            <el-input v-model="form.keywords" placeholder="可选，空格分隔（分词级匹配）" style="width: 260px;" />
-          </el-form-item>
+        <div class="lts-config-card">
+          <div class="lts-card-head">
+            <el-icon :size="16" :color="getCssVar('--cyan')"><Search /></el-icon>
+            <span>日志检索目标</span>
+            <span class="lts-card-sub">命中规则后，在此日志组/流中按关键字检索 Java 应用日志并降噪</span>
+          </div>
+          <div class="lts-card-body">
+            <div class="form-row">
+              <el-form-item label="日志组 ID" prop="log_group_id" class="form-grow">
+                <el-input v-model="form.log_group_id" placeholder="华为云 LTS 日志组 ID" />
+              </el-form-item>
+              <el-form-item label="日志流 ID" prop="log_stream_id" class="form-grow">
+                <el-input v-model="form.log_stream_id" placeholder="华为云 LTS 日志流 ID" />
+              </el-form-item>
+            </div>
+            <div class="form-row">
+              <el-form-item label="时间窗（分钟）">
+                <el-input-number v-model="form.time_window_minutes" :min="1" :max="1440" style="width: 140px;" />
+              </el-form-item>
+              <el-form-item label="拉取上限（行）">
+                <el-input-number v-model="form.limit" :min="50" :max="5000" :step="50" style="width: 140px;" />
+              </el-form-item>
+            </div>
+            <div class="form-row">
+              <el-form-item label="级别过滤">
+                <el-input v-model="form.level_filter" placeholder="ERROR,FATAL" style="width: 180px;" />
+              </el-form-item>
+              <el-form-item label="附加关键字">
+                <el-input v-model="form.keywords" placeholder="可选，空格分隔（分词级匹配）" style="width: 260px;" />
+              </el-form-item>
+            </div>
+          </div>
         </div>
 
         <h4 class="form-section-title">联动与通知</h4>
@@ -430,10 +448,52 @@ onMounted(fetchAll)
 }
 .lts-cell {
   font-size: 12px;
-  line-height: 1.7;
+  line-height: 1.8;
+}
+.lts-cell-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.lts-label {
+  color: var(--text-tertiary, #909399);
+  flex-shrink: 0;
 }
 .lts-meta {
   color: var(--text-tertiary, #909399);
+}
+.dot-sep {
+  color: var(--border, #e4e7ed);
+}
+.lts-kw {
+  color: var(--amber, #f59e0b);
+}
+.lts-config-card {
+  border: 1px solid var(--border, #e4e7ed);
+  border-left: 3px solid var(--cyan, #0ea5e9);
+  border-radius: 8px;
+  background: var(--bg-muted, #f7f9fc);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.lts-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #303133);
+  border-bottom: 1px solid var(--border, #e4e7ed);
+  background: rgba(14, 165, 233, 0.04);
+}
+.lts-card-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-tertiary, #909399);
+}
+.lts-card-body {
+  padding: 16px 16px 4px;
 }
 .channel-names {
   font-size: 12px;
