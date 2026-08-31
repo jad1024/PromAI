@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,33 +25,74 @@ import (
 	piagent "PromAI/pkg/pi-agent"
 )
 
-// LTS 触发防抖：同规则同告警指纹 30 分钟冷却 + 全局并发上限 2。
-const ltsCooldown = 30 * time.Minute
-const ltsMaxConcurrency = 2
-
+// LTS 触发防抖：同规则同告警指纹冷却 + 全局并发上限。
+// 冷却时长与并发上限可配置（AppSetting），运行时读取，改配置即时生效。
 var (
 	ltsTriggerMu       sync.Mutex
 	ltsTriggerCooldown = map[string]time.Time{}
-	ltsTriggerSem      = make(chan struct{}, ltsMaxConcurrency)
+	ltsActiveCount     int // 当前进行中的 LTS 巡检数（并发控制，替代固定容量 channel）
 )
 
-// ltsTriggerAllowed 冷却判定（同规则+指纹 30 分钟内只触发一次），并顺带清理过期项。
+// ltsCooldownDuration 读取触发冷却时长（key: ai_lts_cooldown_minutes，默认 30 分钟，0=不冷却）。
+func ltsCooldownDuration() time.Duration {
+	const fallback = 30
+	if v := strings.TrimSpace(database.GetAppSetting("ai_lts_cooldown_minutes")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return time.Duration(n) * time.Minute
+		}
+	}
+	return fallback * time.Minute
+}
+
+// ltsMaxConcurrency 读取并发上限（key: ai_lts_max_concurrency，默认 2，下限 1）。
+func ltsMaxConcurrency() int {
+	const fallback = 2
+	if v := strings.TrimSpace(database.GetAppSetting("ai_lts_max_concurrency")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			return n
+		}
+	}
+	return fallback
+}
+
+// ltsTriggerAllowed 冷却判定（同规则+指纹冷却期内只触发一次），并顺带清理过期项。
 func ltsTriggerAllowed(key string) bool {
+	cooldown := ltsCooldownDuration()
 	ltsTriggerMu.Lock()
 	defer ltsTriggerMu.Unlock()
-	if t, ok := ltsTriggerCooldown[key]; ok && time.Since(t) < ltsCooldown {
+	if t, ok := ltsTriggerCooldown[key]; ok && cooldown > 0 && time.Since(t) < cooldown {
 		return false
 	}
 	ltsTriggerCooldown[key] = time.Now()
 	// 超过 1 万条做一次过期清理，防止 map 无界增长
 	if len(ltsTriggerCooldown) > 10000 {
 		for k, t := range ltsTriggerCooldown {
-			if time.Since(t) >= ltsCooldown {
+			if time.Since(t) >= cooldown {
 				delete(ltsTriggerCooldown, k)
 			}
 		}
 	}
 	return true
+}
+
+// ltsAcquireSlot 尝试占一个并发槽位；满则返回 false（非阻塞，避免告警风暴时堆积）。
+func ltsAcquireSlot() bool {
+	ltsTriggerMu.Lock()
+	defer ltsTriggerMu.Unlock()
+	if ltsActiveCount >= ltsMaxConcurrency() {
+		return false
+	}
+	ltsActiveCount++
+	return true
+}
+
+// ltsReleaseSlot 释放一个并发槽位。
+func ltsReleaseSlot() {
+	ltsTriggerMu.Lock()
+	defer ltsTriggerMu.Unlock()
+	if ltsActiveCount > 0 {
+		ltsActiveCount--
+	}
 }
 
 // matchEnabledTriggerRules 查询启用且匹配的触发规则（source 限定 + 多条件 AND 匹配）。
@@ -107,9 +149,7 @@ func safeTriggerLTSInspection(ev *webhook.AlertEvent, source *database.ExternalA
 			continue
 		}
 		// 并发上限（非阻塞，满则跳过，避免告警风暴时堆积）
-		select {
-		case ltsTriggerSem <- struct{}{}:
-		default:
+		if !ltsAcquireSlot() {
 			log.Printf("[LTSTrigger] 并发上限已满，规则[%d]跳过", rule.ID)
 			continue
 		}
@@ -127,7 +167,7 @@ func sourceName(source *database.ExternalAlertSource) string {
 // runLTSInspection 单条规则的完整巡检：预算 → 查日志 → 折叠 → AI 分析 → 推送。
 func runLTSInspection(ev *webhook.AlertEvent, source *database.ExternalAlertSource, fp string, rule *database.AlertTriggerRule) {
 	defer func() {
-		<-ltsTriggerSem
+		ltsReleaseSlot()
 		if p := recover(); p != nil {
 			log.Printf("[LTSTrigger] 规则[%d]巡检 panic: %v", rule.ID, p)
 		}
@@ -176,7 +216,16 @@ func runLTSInspection(ev *webhook.AlertEvent, source *database.ExternalAlertSour
 	summary := lts.RenderSummary(folded)
 	logsJSON := buildLogsJSON(rule, start, end, lines, folded)
 
-	res, err := piagent.DefaultAgentHandler.AnalyzeLTSAlertAndRecord(ctx, rule, ev, fp, summary, logsJSON)
+	// 指标巡检联动（Phase 2）：规则绑定了巡检模板时，采集模板指标摘要并入 AI 分析上下文
+	var inspectionSummary string
+	if rule.InspectionTemplateID != nil && *rule.InspectionTemplateID != 0 {
+		inspectionSummary = piagent.DefaultAgentHandler.CollectInspectionSummary(ctx, *rule.InspectionTemplateID)
+		if inspectionSummary != "" {
+			log.Printf("[LTSTrigger] 规则[%d]已采集巡检模板[%d]指标摘要", rule.ID, *rule.InspectionTemplateID)
+		}
+	}
+
+	res, err := piagent.DefaultAgentHandler.AnalyzeLTSAlertAndRecord(ctx, rule, ev, fp, summary, logsJSON, inspectionSummary)
 	if err != nil {
 		log.Printf("[LTSTrigger] 规则[%d] AI 巡检分析失败: %v", rule.ID, err)
 		return

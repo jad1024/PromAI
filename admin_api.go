@@ -426,6 +426,12 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/alert-trigger-rules", logged(auth(a.handleAlertTriggerRules)))
 	mux.HandleFunc("/api/promai/alert-trigger-rules/", logged(auth(a.handleAlertTriggerRuleByID)))
 
+	// ===== AI 分析记录（token 汇总看板 + 日志留档查看面板） ========================
+	// 注意：summary / :id 子路由需先于通配（此处为独立路径前缀，无冲突）
+	mux.HandleFunc("/api/promai/ai-analysis-records/summary", logged(auth(a.handleLTSAnalysisSummary)))
+	mux.HandleFunc("/api/promai/ai-analysis-records", logged(auth(a.handleLTSAnalysisRecords)))
+	mux.HandleFunc("/api/promai/ai-analysis-records/", logged(auth(a.handleLTSAnalysisRecordByID)))
+
 	log.Printf("[AdminAPI] 管理接口已注册")
 }
 

@@ -15,6 +15,7 @@ func CreateAllTools(cfg *config.Config, collector *metrics.Collector, db DB) []a
 		&ListReportsTool{db: db},
 		&GetReportDetailTool{db: db},
 		&ListDatasourcesTool{db: db},
+		&QueryLTSTool{db: db},
 		inspectTool,
 		&QueryTaskTool{parent: inspectTool},
 		NewPushReportTool(cfg, db),

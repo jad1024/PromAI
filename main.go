@@ -186,6 +186,9 @@ func main() {
 	// 配置告警历史清理（按保留天数删除历史告警，防止表无限增长）
 	startAlertHistoryCleanup(config)
 
+	// 配置 LTS 巡检日志留档过期清理（只清空 LogsJSON 大字段，保留 token 计量）
+	startLTSLogsCleanup(config)
+
 	// 启动 HTTP 服务器
 	log.Printf("==========================================")
 	log.Printf("PromAI 系统监控平台启动成功！")
@@ -460,6 +463,39 @@ func startAlertHistoryCleanup(config *config.Config) {
 	} else {
 		ah.Start()
 		log.Printf("告警历史清理任务已启动，保留天数: %d，执行周期: 每日 03:00", retentionDays)
+	}
+}
+
+// startLTSLogsCleanup 启动 LTS 巡检日志留档过期清理：每天凌晨 3 点清空超过保留天数的
+// AiAnalysisRecord.LogsJSON（不删记录本身，保留 token 计量用于长期统计，只释放大体积的日志证据）。
+// 保留天数读取系统设置 ai_lts_logs_retention_days（默认 30），0=不清理。
+func startLTSLogsCleanup(config *config.Config) {
+	retentionDays := 30
+	if v := database.GetAppSettingDefault("ai_lts_logs_retention_days", "30"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			retentionDays = n
+		}
+	}
+	if retentionDays <= 0 {
+		log.Printf("LTS 日志留档清理未启用（ai_lts_logs_retention_days=0）")
+		return
+	}
+	lc := cron.New()
+	if _, err := lc.AddFunc("0 3 * * *", func() {
+		cutoff := time.Now().AddDate(0, 0, -retentionDays)
+		res := database.DB.Model(&database.AiAnalysisRecord{}).
+			Where("logs_json <> '' AND created_at < ?", cutoff).
+			Update("logs_json", "")
+		if res.Error != nil {
+			log.Printf("LTS 日志留档清理失败: %v", res.Error)
+			return
+		}
+		log.Printf("LTS 日志留档清理完成: 清空 %d 条超过 %d 天的日志证据", res.RowsAffected, retentionDays)
+	}); err != nil {
+		log.Printf("设置 LTS 日志留档清理任务失败: %v", err)
+	} else {
+		lc.Start()
+		log.Printf("LTS 日志留档清理任务已启动，保留天数: %d，执行周期: 每日 03:00", retentionDays)
 	}
 }
 

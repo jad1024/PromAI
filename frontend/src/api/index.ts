@@ -345,4 +345,51 @@ export const createAISkill = (s: AiSkill) => api.post<AiSkill>('/ai/skills', s)
 export const updateAISkill = (name: string, s: AiSkill) => api.post(`/ai/skills/${name}`, s)
 export const deleteAISkill = (name: string) => api.delete(`/ai/skills/${name}`)
 
+// ===== AI 分析记录（token 汇总看板 + 日志留档查看面板） =====
+export interface AiAnalysisRecordItem {
+  id: number
+  type: string
+  ref_id: string
+  rule_id: number
+  model_name: string
+  status: string
+  duration_ms: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cost_est?: number | null
+  tokens_estimated: boolean
+  has_logs: boolean
+  created_at: string
+}
+export interface AiAnalysisSummary {
+  today: { calls: number; prompt_tokens: number; completion_tokens: number; total_tokens: number; cost_est: number }
+  month: { calls: number; prompt_tokens: number; completion_tokens: number; total_tokens: number; cost_est: number }
+  daily_budget: number
+}
+export interface AiAnalysisRecordDetail {
+  id: number
+  type: string
+  ref_id: string
+  rule_id: number
+  model_name: string
+  status: string
+  error: string
+  duration_ms: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cost_est?: number | null
+  tokens_estimated: boolean
+  prompt: string
+  result: string
+  logs: any
+  created_at: string
+}
+
+export const getAiAnalysisRecords = (params?: { page?: number; page_size?: number; type?: string; keyword?: string }) =>
+  api.get<{ items: AiAnalysisRecordItem[]; total: number; page: number; page_size: number }>('/ai-analysis-records', { params })
+export const getAiAnalysisSummary = () => api.get<AiAnalysisSummary>('/ai-analysis-records/summary')
+export const getAiAnalysisRecord = (id: number) => api.get<AiAnalysisRecordDetail>(`/ai-analysis-records/${id}`)
+
 export default api

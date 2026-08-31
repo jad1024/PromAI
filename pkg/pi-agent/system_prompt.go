@@ -45,6 +45,9 @@ func BuildSystemPrompt(cfg *config.Config, db *gorm.DB, skills []Skill) string {
     参数: task_id(必需)
  8. **push_report** — 将巡检报告或自定义内容推送到通知渠道（如企业微信、钉钉、飞书、邮件）
     参数: channel(必需, 可选值: wechat_work/dingtalk/feishu/email), content(可选, 自定义内容，填写后将推送自定义文本而非报告摘要), report_id(可选, 不填则推送最新报告，与content不能同时使用), webhook_url(可选, 自定义机器人webhook地址，支持wechat_work/dingtalk/feishu)
+ 9. **query_lts** — 查询华为云 LTS 日志并返回降噪折叠摘要，用于告警根因定位。日志组/流未指定时会从触发规则自动推断
+    参数: keywords(必需, 检索关键字), log_group_id(可选), log_stream_id(可选), time_range_minutes(可选, 默认15, 最大60), source_id(可选, 告警源ID)
+    注意: 单次分析最多调用 2 次，优先用告警的 IP/服务名/错误码作为关键字
 
 ## 巡检模板与指标范围
 - 数据源可绑定一个或多个巡检模板，模板内包含一组指标配置（可按模板覆盖阈值/单位等）。未显式指定范围时，trigger_inspect 按数据源绑定的模板合并巡检指标。
@@ -55,6 +58,7 @@ func BuildSystemPrompt(cfg *config.Config, db *gorm.DB, skills []Skill) string {
 - 系统会对实时告警按「规则 + 集群」去重，并进一步按 alertname 聚合为「事件/故障」（Incident），标注是否告警风暴、涉及的集群/实例数。
 - 手动删除实时告警属于硬删除（软删 removed_at），会同步从事件聚合与历史中消失；手动删除事件聚合属于软 dismiss（dismissed_at），若告警尚未恢复且再次触发会重新出现。
 - 解读告警时，优先结合事件聚合的降噪结论（同源聚合、风暴标记）判断，而不是逐条平铺实例。
+- 华为云告警或配置了 LTS 日志源的告警，可用 query_lts 工具按告警的 IP/服务名/时间窗检索日志，将日志证据与指标异常相互印证后再下根因结论。
 
 ## 工作要求
 - 对于指标查询，先理解用户意图，构造合适的 PromQL

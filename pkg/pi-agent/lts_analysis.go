@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"PromAI/pkg/database"
 	"PromAI/pkg/alerting/webhook"
+	"PromAI/pkg/database"
+	"PromAI/pkg/metrics"
 )
 
 // =============================================================================
@@ -20,7 +21,8 @@ import (
 // =============================================================================
 
 // buildLTSAnalysisPrompt 组装 LTS 告警巡检分析 Prompt。
-func buildLTSAnalysisPrompt(rule *database.AlertTriggerRule, ev *webhook.AlertEvent, summary string) string {
+// inspectionSummary 为绑定的巡检模板跑出的指标巡检摘要（可为空，Phase 2 联动）。
+func buildLTSAnalysisPrompt(rule *database.AlertTriggerRule, ev *webhook.AlertEvent, summary, inspectionSummary string) string {
 	var b strings.Builder
 	b.WriteString("你是 PromAI 的资深运维监控专家。请结合告警上下文与华为云 LTS 日志证据，定位本次告警的根因。\n\n")
 
@@ -62,6 +64,12 @@ func buildLTSAnalysisPrompt(rule *database.AlertTriggerRule, ev *webhook.AlertEv
 	b.WriteString(summary)
 	b.WriteString("\n（折叠说明：IP/数字/UUID/时间戳已归一为占位符；堆栈已折叠为异常类型+Caused by 链+应用帧前 3 帧，框架帧计为 <framework> x N。）\n")
 
+	if strings.TrimSpace(inspectionSummary) != "" {
+		b.WriteString("\n## 关联指标巡检结果（绑定巡检模板，实时采集）\n")
+		b.WriteString(inspectionSummary)
+		b.WriteString("\n")
+	}
+
 	b.WriteString(`
 ## 输出要求
 请用 Markdown 输出，控制在 500 字以内：
@@ -75,9 +83,9 @@ func buildLTSAnalysisPrompt(rule *database.AlertTriggerRule, ev *webhook.AlertEv
 }
 
 // AnalyzeLTSAlertAndRecord 对 LTS 告警做 AI 巡检分析并持久化（含 token 计量与日志留档）。
-// refID 用告警指纹；失败不阻断调用方（返回结果 Error 非空）。
-func (h *AgentHandler) AnalyzeLTSAlertAndRecord(ctx context.Context, rule *database.AlertTriggerRule, ev *webhook.AlertEvent, refID, summary, logsJSON string) (*HeadlessResult, error) {
-	prompt := buildLTSAnalysisPrompt(rule, ev, summary)
+// refID 用告警指纹；inspectionSummary 为绑定的巡检模板摘要（可为空）；失败不阻断调用方（返回结果 Error 非空）。
+func (h *AgentHandler) AnalyzeLTSAlertAndRecord(ctx context.Context, rule *database.AlertTriggerRule, ev *webhook.AlertEvent, refID, summary, logsJSON, inspectionSummary string) (*HeadlessResult, error) {
+	prompt := buildLTSAnalysisPrompt(rule, ev, summary, inspectionSummary)
 	res, err := h.RunHeadless(ctx, prompt, 0)
 
 	if h.db != nil {
@@ -110,4 +118,46 @@ func (h *AgentHandler) AnalyzeLTSAlertAndRecord(ctx context.Context, rule *datab
 		}
 	}
 	return res, err
+}
+
+// CollectInspectionSummary 对绑定的巡检模板跑一次实时指标采集，返回压缩后的摘要文本。
+// 复用 trigger_inspect 的配置解析（loadToolTemplateMetricConfigs + buildToolMetricTypesFromConfigs），
+// 但只采集不落报告记录，摘要作为 LTS 巡检 prompt 的关联证据（Phase 2 联动）。
+//
+// 失败时返回空串（联动为非关键路径，不阻断 LTS 巡检），错误仅记日志。
+func (h *AgentHandler) CollectInspectionSummary(ctx context.Context, templateID uint) string {
+	if h == nil || h.collector == nil || h.config == nil || templateID == 0 {
+		return ""
+	}
+
+	configs, err := loadToolTemplateMetricConfigs(&gormDBWrapper{db: h.db}, []uint{templateID})
+	if err != nil {
+		log.Printf("[PiAgent] 巡检联动：加载模板[%d]指标配置失败: %v", templateID, err)
+		return ""
+	}
+	if len(configs) == 0 {
+		log.Printf("[PiAgent] 巡检联动：模板[%d]无指标配置，跳过", templateID)
+		return ""
+	}
+
+	runtimeCfg := cloneToolConfig(h.config)
+	runtimeCfg.MetricTypes = buildToolMetricTypesFromConfigs(&gormDBWrapper{db: h.db}, configs)
+
+	dataCollector := metrics.NewCollectorWithURL(h.collector.Client, runtimeCfg, runtimeCfg.PrometheusURL)
+	data, err := dataCollector.CollectMetricsWithContext(ctx)
+	if err != nil {
+		log.Printf("[PiAgent] 巡检联动：模板[%d]指标采集失败: %v", templateID, err)
+		return ""
+	}
+
+	var b strings.Builder
+	total, crit, warn := summarizeReport(data)
+	b.WriteString(fmt.Sprintf("- 巡检模板 #%d，共 %d 项指标：异常 %d（严重 %d / 警告 %d）\n", templateID, total, crit+warn, crit, warn))
+	lines := collectAbnormalMetrics(data)
+	if len(lines) == 0 {
+		b.WriteString("- 本次未发现异常指标。\n")
+	} else {
+		b.WriteString(strings.Join(lines, "\n"))
+	}
+	return b.String()
 }
