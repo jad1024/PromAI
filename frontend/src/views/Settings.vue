@@ -66,6 +66,33 @@
     <div class="form-section">
       <h3><el-icon :size="16" :color="getCssVar('--cyan')"><Bell /></el-icon> LTS 告警巡检与 AI 预算</h3>
       <p class="section-desc">华为云 LTS 日志巡检的防抖与成本控制，修改后即时生效（无需重启）</p>
+
+      <!-- 链路流程示意图 -->
+      <div class="lts-flow">
+        <div class="lts-flow-title">
+          <el-icon :size="14" :color="getCssVar('--cyan')"><Guide /></el-icon>
+          <span>处理链路（点击环节可跳转到对应配置页）</span>
+        </div>
+        <div class="lts-flow-steps">
+          <template v-for="(s, i) in ltsFlowSteps" :key="s.name">
+            <div
+              class="flow-step"
+              :class="{ 'is-builtin': s.builtin, 'is-clickable': s.route }"
+              @click="s.route && $router.push(s.route)"
+            >
+              <div class="flow-step-icon" :style="{ background: s.builtin ? 'transparent' : 'var(--cyan-dim)', color: s.builtin ? 'var(--text-tertiary)' : 'var(--cyan)' }">
+                <el-icon :size="16"><component :is="s.icon" /></el-icon>
+              </div>
+              <div class="flow-step-name">{{ s.name }}</div>
+              <div class="flow-step-route">{{ s.route ? s.routeLabel : (s.builtin ? '内置自动' : '') }}</div>
+            </div>
+            <div v-if="i < ltsFlowSteps.length - 1" class="flow-arrow">
+              <el-icon :size="14"><Right /></el-icon>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <el-form :model="form" label-width="160px" style="max-width: 600px;">
         <el-form-item label="触发冷却（分钟）">
           <el-input-number v-model="ltsCooldownMinutes" :min="0" :max="1440" style="width: 100%;" />
@@ -303,6 +330,27 @@ function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
+// LTS 告警巡检处理链路示意（环节名 → 图标 → 配置页面路由）
+interface LtsFlowStep {
+  name: string
+  icon: string
+  route?: string
+  routeLabel?: string
+  builtin?: boolean
+}
+const ltsFlowSteps: LtsFlowStep[] = [
+  { name: '外部告警', icon: 'Link', route: '/alert-sources', routeLabel: '告警源管理' },
+  { name: '规则匹配', icon: 'Aim', route: '/alert-trigger-rules', routeLabel: 'LTS 触发规则' },
+  { name: '冷却+并发', icon: 'Timer', route: '/settings', routeLabel: '本页配置' },
+  { name: '日预算护栏', icon: 'Wallet', route: '/settings', routeLabel: '本页配置' },
+  { name: 'LTS 检索', icon: 'Search', route: '/alert-trigger-rules', routeLabel: 'LTS 触发规则' },
+  { name: '日志降噪', icon: 'Filter', builtin: true },
+  { name: 'AI 巡检', icon: 'MagicStick', route: '/templates', routeLabel: '巡检模板' },
+  { name: '落库留档', icon: 'DataAnalysis', route: '/ai-analysis-records', routeLabel: 'AI 分析记录' },
+  { name: '推送报告', icon: 'Bell', route: '/notifications', routeLabel: '通知渠道' },
+]
+
+
 const { currentTheme, setTheme, themeOptions, customTheme, isCustomActive, generateFromPrimary, resetCustom } = useTheme()
 
 interface AIModelForm {
@@ -518,6 +566,80 @@ const previewStyle = computed(() => ({
 </script>
 
 <style scoped>
+.lts-flow {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+.lts-flow-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary, #606266);
+  margin-bottom: 14px;
+}
+.lts-flow-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.flow-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 82px;
+  flex-shrink: 0;
+  text-align: center;
+  padding: 6px 4px;
+  border-radius: 8px;
+  cursor: default;
+  transition: background 0.15s;
+}
+.flow-step.is-clickable {
+  cursor: pointer;
+}
+.flow-step.is-clickable:hover {
+  background: var(--bg-card-hover);
+}
+.flow-step-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.flow-step.is-builtin .flow-step-icon {
+  border: 1px dashed var(--border);
+}
+.flow-step-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.flow-step.is-builtin .flow-step-name {
+  color: var(--text-tertiary);
+}
+.flow-step-route {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.flow-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  margin-top: 12px;
+  flex-shrink: 0;
+}
 .model-card {
   margin-top: 16px;
   padding: 20px;
