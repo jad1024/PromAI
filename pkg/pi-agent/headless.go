@@ -183,7 +183,7 @@ type crossClusterAlert struct {
 	// CollapsedCount 折叠的实例数；>1 时 prompt 会标注"（共 N 个实例）"
 	CollapsedCount int
 	// Flapping 该规则在近 30 分钟内的触发↔恢复来回次数达到阈值，判定为震荡
-	Flapping bool
+	Flapping  bool
 	FlapCount int
 }
 
@@ -259,10 +259,10 @@ func (h *AgentHandler) fetchCrossClusterAlerts(instances []database.AlertInstanc
 		dsID   uint
 	}
 	type group struct {
-		item     crossClusterAlert
-		count    int
-		peakSev  string
-		firstAt  time.Time
+		item    crossClusterAlert
+		count   int
+		peakSev string
+		firstAt time.Time
 	}
 	groups := map[groupKey]*group{}
 	order := make([]groupKey, 0, len(raw))
@@ -527,6 +527,14 @@ func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string) st
 		b.WriteString("当前无活跃告警。\n")
 	}
 
+	// 事件聚合降噪结论（按 alertname 聚合故障，标注风暴），让 AI 用降噪后结论而非逐条平铺
+	b.WriteString("\n## 事件聚合降噪\n")
+	if incidents := collectIncidentSummary(8); len(incidents) > 0 {
+		b.WriteString(strings.Join(incidents, "\n"))
+	} else {
+		b.WriteString("当前无活跃故障。\n")
+	}
+
 	if reportURL != "" {
 		b.WriteString(fmt.Sprintf("\n\n完整报告: %s\n", reportURL))
 	}
@@ -535,7 +543,7 @@ func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string) st
 ## 输出要求
 请用 Markdown 输出，控制在 400 字以内：
 1. 📊 健康总览：一句话概括当前系统状态
-2. 🔍 异常分析：逐条说明异常指标的含义与可能原因；若存在活跃告警，请结合告警清单一并解读（无异常则说明状态良好）
+2. 🔍 异常分析：逐条说明异常指标的含义与可能原因；若存在活跃告警，请结合告警清单与「事件聚合降噪」结论一并解读（同源故障合并判断、告警风暴单独提示；无异常则说明状态良好）
 3. 🛠️ 处理建议：针对异常与活跃告警给出可操作建议
 4. ⚠️ 风险提示：需要提前关注的潜在风险
 
@@ -653,6 +661,131 @@ func truncateValue(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+// collectIncidentSummary 基于事件聚合模型汇总当前活跃告警的降噪结论。
+// 按 alertname 聚合（与事件聚合页一致），输出故障数、各故障涉及的实例/集群数、
+// 是否告警风暴，供巡检 AI 分析用降噪后的结构化结论而非平铺实例。
+func collectIncidentSummary(max int) []string {
+	if database.DB == nil {
+		return nil
+	}
+
+	stormThreshold := 10
+	windowMinutes := 10
+	var settings []database.AppSetting
+	if err := database.DB.Where("key IN ?", []string{"alert_denoise_storm_threshold", "alert_denoise_window_minutes"}).Find(&settings).Error; err == nil {
+		for _, s := range settings {
+			switch s.Key {
+			case "alert_denoise_storm_threshold":
+				if v, err := strconv.Atoi(s.Value); err == nil && v >= 0 && v <= 1000 {
+					stormThreshold = v
+				}
+			case "alert_denoise_window_minutes":
+				if v, err := strconv.Atoi(s.Value); err == nil && v >= 0 && v <= 1440 {
+					windowMinutes = v
+				}
+			}
+		}
+	}
+
+	var insts []database.AlertInstance
+	if err := database.DB.Where("state IN ?", []string{"firing", "pending"}).
+		Order("active_at desc").Limit(500).Find(&insts).Error; err != nil || len(insts) == 0 {
+		return nil
+	}
+
+	// 规则名 / 数据源名映射
+	var rules []database.AlertRule
+	database.DB.Select("id, name").Find(&rules)
+	ruleNames := make(map[uint]string, len(rules))
+	for _, r := range rules {
+		ruleNames[r.ID] = r.Name
+	}
+	var dss []database.DataSource
+	database.DB.Select("id, name").Find(&dss)
+	dsNames := make(map[uint]string, len(dss))
+	for _, d := range dss {
+		dsNames[d.ID] = d.Name
+	}
+
+	type agg struct {
+		name     string
+		severity string
+		count    int
+		clusters map[uint]struct{}
+		lastAt   time.Time
+	}
+	groups := map[string]*agg{}
+	var order []string
+	for _, in := range insts {
+		labels := parseAlertLabels(in.LabelsJSON)
+		name := ruleNames[in.RuleID]
+		if name == "" {
+			name = labels["alertname"]
+		}
+		if name == "" {
+			name = fmt.Sprintf("告警#%d", in.RuleID)
+		}
+		g, ok := groups[name]
+		if !ok {
+			g = &agg{name: name, clusters: map[uint]struct{}{}, lastAt: in.ActiveAt}
+			groups[name] = g
+			order = append(order, name)
+		}
+		g.count++
+		if severityRank(in.Severity) > severityRank(g.severity) {
+			g.severity = in.Severity
+		}
+		g.clusters[in.DatasourceID] = struct{}{}
+		if in.ActiveAt.After(g.lastAt) {
+			g.lastAt = in.ActiveAt
+		}
+	}
+
+	// 排序：实例数降序（风暴/大故障靠前）
+	sort.SliceStable(order, func(i, j int) bool {
+		return groups[order[i]].count > groups[order[j]].count
+	})
+
+	lines := make([]string, 0, len(order)+1)
+	totalIncidents := len(order)
+	stormCount := 0
+	for i, name := range order {
+		if max > 0 && i >= max {
+			lines = append(lines, fmt.Sprintf("- ... 其余 %d 个故障略", totalIncidents-i))
+			break
+		}
+		g := groups[name]
+		storm := g.count >= stormThreshold
+		if storm {
+			stormCount++
+		}
+		sev := g.severity
+		if sev == "" {
+			sev = "unknown"
+		}
+		stormMark := ""
+		if storm {
+			stormMark = " ⚠️告警风暴"
+		}
+		clusterNames := make([]string, 0, len(g.clusters))
+		for id := range g.clusters {
+			if n := dsNames[id]; n != "" {
+				clusterNames = append(clusterNames, n)
+			}
+		}
+		sort.Strings(clusterNames)
+		clusterStr := ""
+		if len(clusterNames) > 0 && len(clusterNames) <= 4 {
+			clusterStr = "（" + strings.Join(clusterNames, ", ") + "）"
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] %s：%d 个实例 / %d 个集群%s%s", sev, g.name, g.count, len(g.clusters), clusterStr, stormMark))
+	}
+
+	header := fmt.Sprintf("事件聚合降噪（窗口 %d 分钟，风暴阈值 %d 实例）：共 %d 个故障、%d 个活跃实例，其中 %d 个疑似风暴",
+		windowMinutes, stormThreshold, totalIncidents, len(insts), stormCount)
+	return append([]string{header}, lines...)
 }
 
 // parseAlertLabels 解析告警实例的标签 JSON（兼容数值/布尔值）

@@ -18,10 +18,10 @@ metadata: {}
 
 ### 1. 使用 analyze_alert 工具
 
-这是分析告警的核心工具。直接传入指标名称：
+这是分析告警的核心工具。传入指标名称或告警规则名（工具会自动从「指标配置/告警规则」中读取该告警的真实 PromQL 与阈值进行查询）：
 
 ```
-analyze_alert(metric_name="node_cpu_seconds_total")
+analyze_alert(metric_name="CPU性能状态监控")
 ```
 
 如果用户提到了具体实例，带上 instance：
@@ -29,6 +29,8 @@ analyze_alert(metric_name="node_cpu_seconds_total")
 ```
 analyze_alert(metric_name="node_memory_MemAvailable_bytes", instance="192.168.1.100:9100")
 ```
+
+analyze_alert 返回中会包含：告警规则/指标配置元信息、真实 PromQL 的当前值与阈值判定、CPU/内存/磁盘关联指标、事件聚合上下文（本规则活跃实例数、是否疑似告警风暴）、近期异常巡检记录。优先解读事件聚合的降噪结论（同源聚合、风暴标记），再结合关联指标综合判断。
 
 ### 2. 查询关联指标
 
@@ -76,6 +78,6 @@ get_report_detail(report_id=123)
 ## 常见场景示例
 
 ### CPU 持续高负载
-1. `analyze_alert(metric_name="node_cpu_seconds_total")`
-2. `query_metrics(promql="topk(5, sum by (process) (rate(node_procs_running{}[5m])))")`
-3. 建议使用 `exec` 确认是否有异常进程
+1. `analyze_alert(metric_name="CPU性能状态监控")` —— 自动读取真实 PromQL 并返回当前值与阈值判定
+2. `query_metrics(promql="topk(5, sum by (process) (rate(node_procs_running{}[5m])))", datasource="<集群名>")`
+3. 结合 analyze_alert 返回的事件聚合上下文，确认是否多实例同源/告警风暴，再给出处置建议

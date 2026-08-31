@@ -20,7 +20,7 @@ metadata: {}
 list_datasources()
 ```
 
-用户可能指定了名称，从结果中找到对应的数据源。
+用户可能指定了名称，从结果中找到对应的数据源。注意数据源是否绑定了巡检模板（输出中 `[模板IDs: ...]`）；若未绑定模板/指标，需先提示用户配置，否则巡检无法执行。
 
 ### 2. 触发巡检
 
@@ -29,6 +29,21 @@ trigger_inspect(datasource="<datasource_name_or_url>")
 ```
 
 返回 task_id，记录下来。
+
+**可选：限定巡检范围**（用户只关心部分指标时使用，避免全量巡检）：
+
+```
+# 指定巡检模板
+trigger_inspect(datasource="<name>", template_id="<模板ID或名称>")
+
+# 指定具体指标（ID 或名称，逗号分隔）
+trigger_inspect(datasource="<name>", metric_config_ids="1,2,3")
+
+# 指定指标分组（类型 ID 或名称，逗号分隔）
+trigger_inspect(datasource="<name>", metric_type_ids="CPU,内存")
+```
+
+三者优先级：template_id > metric_config_ids > metric_type_ids。未指定时按数据源绑定的模板全量巡检。
 
 ### 3. 轮询任务状态
 

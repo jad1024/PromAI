@@ -76,13 +76,28 @@ func (t *TriggerInspectTool) GetParameters() map[string]any {
 				"type":        "string",
 				"description": "数据源名称或 URL，留空使用默认数据源",
 			},
+			"template_id": map[string]any{
+				"type":        "string",
+				"description": "巡检模板 ID 或名称，指定后仅巡检该模板绑定的指标（优先级最高）",
+			},
+			"metric_config_ids": map[string]any{
+				"type":        "string",
+				"description": "逗号分隔的具体指标 ID 或名称，指定后仅巡检这些指标",
+			},
+			"metric_type_ids": map[string]any{
+				"type":        "string",
+				"description": "逗号分隔的指标分组（类型）ID 或名称，指定后仅巡检这些分组下的指标",
+			},
 		},
 	}
 }
 
 func (t *TriggerInspectTool) Execute(ctx context.Context, params map[string]any, onUpdate func(*agent.AgentToolResult)) (*agent.AgentToolResult, error) {
 	dsParam, _ := params["datasource"].(string)
-	log.Printf("[PiAgent] 工具调用: trigger_inspect datasource=%s", dsParam)
+	templateID, _ := params["template_id"].(string)
+	metricConfigIDs, _ := params["metric_config_ids"].(string)
+	metricTypeIDs, _ := params["metric_type_ids"].(string)
+	log.Printf("[PiAgent] 工具调用: trigger_inspect datasource=%s template=%s metric_types=%s metric_configs=%s", dsParam, templateID, metricTypeIDs, metricConfigIDs)
 
 	ds, promURL, promUser, promPass, dsName := resolveToolDatasource(t.config, t.db, dsParam)
 	runtimeCfg, err := buildToolRuntimeMetricConfig(t.config, t.db, ds)
@@ -91,6 +106,23 @@ func (t *TriggerInspectTool) Execute(ctx context.Context, params map[string]any,
 			Content: []ai.ContentBlock{ai.NewTextContentBlock(fmt.Sprintf("加载数据源巡检配置失败: %v", err))},
 		}, nil
 	}
+
+	// 显式指定巡检范围时，覆盖默认的模板/数据源绑定指标
+	if scope := strings.TrimSpace(templateID) + strings.TrimSpace(metricConfigIDs) + strings.TrimSpace(metricTypeIDs); scope != "" {
+		configs, err := loadToolScopedMetricConfigs(t.db, ds, metricTypeIDs, metricConfigIDs, templateID)
+		if err != nil {
+			return &agent.AgentToolResult{
+				Content: []ai.ContentBlock{ai.NewTextContentBlock(fmt.Sprintf("解析巡检范围失败: %v", err))},
+			}, nil
+		}
+		if len(configs) == 0 {
+			return &agent.AgentToolResult{
+				Content: []ai.ContentBlock{ai.NewTextContentBlock("指定范围内未找到有效指标，请检查模板 ID / 指标 ID / 分组名称是否正确")},
+			}, nil
+		}
+		runtimeCfg.MetricTypes = buildToolMetricTypesFromConfigs(t.db, configs)
+	}
+
 	if len(runtimeCfg.MetricTypes) == 0 {
 		target := dsName
 		if ds != nil {
