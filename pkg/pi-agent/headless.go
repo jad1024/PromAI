@@ -36,6 +36,12 @@ type HeadlessResult struct {
 	ModelName string        // 实际使用的模型名
 	Duration  time.Duration // 耗时
 	Error     string        // 模型层错误（如非空则 Text 可能不完整）
+
+	// token 计量（从模型响应 usage 提取，多轮累加；无法提取时按 prompt 字节估算并标记）
+	PromptTokens     int  // 输入 token
+	CompletionTokens int  // 输出 token
+	TotalTokens      int  // 总 token
+	TokensEstimated  bool // token 是否为估算值（模型未返回 usage）
 }
 
 // DefaultAgentHandler 全局 AI Agent 句柄，由 main.go 在 setupRoutes 时赋值，
@@ -72,6 +78,7 @@ func (h *AgentHandler) RunHeadless(ctx context.Context, prompt string, timeout t
 
 	var sb strings.Builder
 	var runErr error
+	var usage ai.Usage
 	done := make(chan struct{})
 
 	unsub := ag.Subscribe(func(event agent.AgentEvent) {
@@ -91,6 +98,11 @@ func (h *AgentHandler) RunHeadless(ctx context.Context, prompt string, timeout t
 						sb.WriteString(stripThinkTags(tb.Text))
 					}
 				}
+				// 累加 usage（多轮工具调用时每轮各计一次）
+				usage.Input += msg.Usage.Input
+				usage.Output += msg.Usage.Output
+				usage.CacheRead += msg.Usage.CacheRead
+				usage.TotalTokens += msg.Usage.TotalTokens
 			}
 		case *agent.AgentEventEnd:
 			close(done)
@@ -110,6 +122,17 @@ func (h *AgentHandler) RunHeadless(ctx context.Context, prompt string, timeout t
 
 	res.Duration = time.Since(started)
 	res.Text = strings.TrimSpace(stripSkillMarkers(sb.String()))
+	// token 计量：优先取模型返回的 usage；缺失则按 prompt 字节估算
+	if usage.TotalTokens > 0 {
+		res.PromptTokens = usage.Input
+		res.CompletionTokens = usage.Output
+		res.TotalTokens = usage.TotalTokens
+	} else {
+		res.PromptTokens = estimateTokens(prompt)
+		res.CompletionTokens = estimateTokens(res.Text)
+		res.TotalTokens = res.PromptTokens + res.CompletionTokens
+		res.TokensEstimated = true
+	}
 	if runErr != nil {
 		res.Error = runErr.Error()
 		return res, runErr

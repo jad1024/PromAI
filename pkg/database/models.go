@@ -551,11 +551,11 @@ type AlertNotifyLog struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// AiAnalysisRecord AI 分析记录（巡检健康分析 / 告警根因分析）
+// AiAnalysisRecord AI 分析记录（巡检健康分析 / 告警根因分析 / LTS 告警巡检）
 type AiAnalysisRecord struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
-	Type       string    `gorm:"size:20;index" json:"type"`    // inspection / alert / alert_external
-	RefID      string    `gorm:"size:100;index" json:"ref_id"` // 巡检 task_id 或告警 group_key
+	Type       string    `gorm:"size:20;index" json:"type"`    // inspection / alert / alert_external / lts_alert
+	RefID      string    `gorm:"size:100;index" json:"ref_id"` // 巡检 task_id 或告警 group_key / 外部告警指纹
 	RuleID     uint      `gorm:"index" json:"rule_id"`
 	ModelName  string    `gorm:"size:100" json:"model_name"`
 	Prompt     string    `gorm:"type:text" json:"prompt"`
@@ -563,7 +563,18 @@ type AiAnalysisRecord struct {
 	Status     string    `gorm:"size:20" json:"status"` // success / failed
 	Error      string    `gorm:"size:500" json:"error"`
 	DurationMs int64     `json:"duration_ms"`
-	CreatedAt  time.Time `json:"created_at"`
+
+	// token 全程计量（LTS 告警巡检 Phase 1 新增）
+	PromptTokens     int      `gorm:"default:0" json:"prompt_tokens"`           // 输入 token 数（模型 usage 或估算）
+	CompletionTokens int      `gorm:"default:0" json:"completion_tokens"`       // 输出 token 数
+	TotalTokens      int      `gorm:"default:0" json:"total_tokens"`            // 总 token 数
+	CostEst          *float64 `json:"cost_est,omitempty"`                       // 估算成本（元），未配置单价时为空
+	TokensEstimated  bool     `gorm:"default:false" json:"tokens_estimated"`    // token 是否为估算值（模型未返回 usage）
+
+	// LTS 日志证据留档（检索参数 + 折叠模式 + 采样原文），供审计/复现/调参验证
+	LogsJSON string `gorm:"type:text" json:"logs_json,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ExternalAlertSource 外部告警源（n9e / 华为云 CES / 阿里云 CloudMonitor / 通用 webhook）
@@ -637,6 +648,47 @@ type ExternalRule struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// TriggerMatcher 触发规则单个匹配条件。
+// Field 支持：alertname / label:<key> / annotation:<key> / any（任意标签或注解值）。
+// Operator 支持：equals / contains / wildcard(glob，内部编译为正则) / regex / cidr(IP 段)。
+type TriggerMatcher struct {
+	Field    string `json:"field"`
+	Operator string `json:"operator"`
+	Value    string `json:"value"`
+}
+
+// AlertTriggerRule 华为云 LTS 告警触发规则。
+// 外部告警（CES/AOM）到达后按 Matchers 匹配，命中则检索 LTS 日志做 AI 巡检并推送报告。
+type AlertTriggerRule struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Name        string `gorm:"size:200;not null" json:"name"`
+	Description string `gorm:"size:500" json:"description"`
+
+	// 匹配条件：多条件 AND（全部命中才触发）；JSON 数组见 TriggerMatcher
+	MatchersJSON string `gorm:"type:text;not null" json:"matchers_json"`
+	// 限定告警源（可选）：0/nil 表示匹配所有外部告警源
+	SourceID *uint `gorm:"index" json:"source_id,omitempty"`
+
+	// LTS 检索配置
+	LogGroupID        string `gorm:"size:100;not null" json:"log_group_id"`                  // LTS 日志组 ID
+	LogStreamID       string `gorm:"size:100;not null" json:"log_stream_id"`                 // LTS 日志流 ID
+	TimeWindowMinutes int    `gorm:"default:15" json:"time_window_minutes"`                  // 检索时间窗（分钟），默认 15
+	Keywords          string `gorm:"size:500" json:"keywords"`                               // 额外关键字（分词级，空格分隔）
+	LevelFilter       string `gorm:"size:100;default:'ERROR,FATAL'" json:"level_filter"`     // 级别过滤（逗号分隔），默认 ERROR,FATAL
+	Limit             int    `gorm:"default:200" json:"limit"`                               // 拉取日志行数上限，默认 200
+
+	// 可选：同时跑指标巡检（绑定巡检模板，Phase 2 联动）
+	InspectionTemplateID *uint `gorm:"index" json:"inspection_template_id,omitempty"`
+
+	// 推送渠道（空 = 全部启用渠道）
+	NotifyChannelIDsRaw string `gorm:"column:notify_channel_ids;type:text" json:"-"`
+	NotifyChannelIDs    []uint `gorm:"-" json:"notify_channel_ids,omitempty"`
+
+	Enabled   bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func AutoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&DataSource{},
@@ -667,5 +719,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&AiAnalysisRecord{},
 		&ExternalAlertSource{},
 		&ExternalRule{},
+		&AlertTriggerRule{},
 	)
 }

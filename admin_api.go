@@ -421,6 +421,11 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/alert-sources", logged(auth(a.handleAlertSources)))
 	mux.HandleFunc("/api/promai/alert-sources/", logged(auth(a.handleAlertSourceByID)))
 
+	// ===== 华为云 LTS 告警触发 AI 巡检 =============================================
+	mux.HandleFunc("/api/promai/alert-trigger-rules/token-stats", logged(auth(a.handleLTSTokenStats)))
+	mux.HandleFunc("/api/promai/alert-trigger-rules", logged(auth(a.handleAlertTriggerRules)))
+	mux.HandleFunc("/api/promai/alert-trigger-rules/", logged(auth(a.handleAlertTriggerRuleByID)))
+
 	log.Printf("[AdminAPI] 管理接口已注册")
 }
 

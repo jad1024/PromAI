@@ -279,6 +279,8 @@ func upsertExternalAlert(ctx context.Context, ev *webhook.AlertEvent, source *da
 		if source.AIAnalysisEnabled && piagent.DefaultAgentHandler != nil && piagent.DefaultAgentHandler.AIEnabled() {
 			go safeAnalyzeExternal(ev, source, fp)
 		}
+		// LTS 告警触发 AI 巡检：独立于通知/AI 开关，命中触发规则才执行
+		go safeTriggerLTSInspection(ev, source, fp)
 	}
 	return nil
 }
