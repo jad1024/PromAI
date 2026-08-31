@@ -10,27 +10,40 @@
       <div class="stat-card">
         <div class="stat-label">今日消耗</div>
         <div class="stat-value">{{ formatTokens(summary?.today.total_tokens ?? 0) }}</div>
-        <div class="stat-sub">{{ summary?.today.calls ?? 0 }} 次调用 · 约 ¥{{ (summary?.today.cost_est ?? 0).toFixed(2) }}</div>
+        <div class="stat-sub">{{ summary?.today.calls ?? 0 }} 次调用 · 约 ¥{{ formatCost(summary?.today.cost_est ?? 0) }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">本月消耗</div>
         <div class="stat-value">{{ formatTokens(summary?.month.total_tokens ?? 0) }}</div>
-        <div class="stat-sub">{{ summary?.month.calls ?? 0 }} 次调用 · 约 ¥{{ (summary?.month.cost_est ?? 0).toFixed(2) }}</div>
+        <div class="stat-sub">{{ summary?.month.calls ?? 0 }} 次调用 · 约 ¥{{ formatCost(summary?.month.cost_est ?? 0) }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">日预算</div>
-        <div class="stat-value">{{ budgetLabel }}</div>
-        <div class="stat-sub" :style="budgetUsageStyle">
-          {{ budgetUsageLabel }}
+        <div class="stat-label">
+          日预算
+          <el-button size="small" text class="refresh-btn" :loading="summaryLoading" @click="fetchSummary">
+            <el-icon><Refresh /></el-icon>
+          </el-button>
         </div>
+        <div class="stat-value">{{ budgetLabel }}</div>
+        <div class="stat-sub" :style="budgetUsageStyle">{{ budgetUsageLabel }}</div>
+        <el-progress
+          v-if="hasBudget"
+          :percentage="budgetUsagePct"
+          :stroke-width="6"
+          :color="budgetProgressColor"
+          :show-text="false"
+          class="budget-progress"
+        />
       </div>
     </div>
 
     <div class="section-card">
       <div class="section-header">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><List /></el-icon> 分析记录</h3>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <el-input v-model="keyword" placeholder="搜索 ref / 模型 / 结果" clearable style="width: 220px;" @keyup.enter="onSearch" @clear="onSearch" />
+        <div class="header-actions">
+          <el-input v-model="keyword" placeholder="搜索 ref / 模型 / 结果" clearable style="width: 220px;" @keyup.enter="onSearch" @clear="onSearch">
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
           <el-select v-model="typeFilter" placeholder="类型" clearable style="width: 150px;" @change="onSearch">
             <el-option label="LTS 告警巡检" value="lts_alert" />
             <el-option label="巡检分析" value="inspection" />
@@ -51,7 +64,7 @@
         </el-table-column>
         <el-table-column prop="ref_id" label="关联 ID" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            <span style="font-family: monospace; font-size: 12px;">{{ row.ref_id || '-' }}</span>
+            <span class="mono">{{ row.ref_id || '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="model_name" label="模型" width="150" show-overflow-tooltip />
@@ -66,7 +79,7 @@
             <span :title="`输入 ${row.prompt_tokens} / 输出 ${row.completion_tokens}`">
               {{ formatTokens(row.total_tokens) }}
               <el-tooltip v-if="row.tokens_estimated" content="token 为估算值（模型未返回 usage）" placement="top">
-                <span style="color: var(--text-tertiary); font-size: 12px;">≈</span>
+                <span class="estimated-mark">≈</span>
               </el-tooltip>
             </span>
           </template>
@@ -74,23 +87,25 @@
         <el-table-column label="成本" width="90" align="right">
           <template #default="{ row }">
             <span v-if="row.cost_est != null">¥{{ row.cost_est.toFixed(3) }}</span>
-            <span v-else style="color: var(--text-tertiary);">-</span>
+            <span v-else class="muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="日志留档" width="90" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.has_logs" size="small" type="info" effect="plain">有</el-tag>
-            <span v-else style="color: var(--text-tertiary);">-</span>
+            <span v-else class="muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" text style="color: var(--cyan);" @click.stop="openDetail(row)">详情</el-button>
+            <el-button size="small" text class="link-btn link-edit" @click.stop="openDetail(row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
 
-      <div v-if="total > pageSize" style="display: flex; justify-content: flex-end; margin-top: 16px; padding: 0 24px 16px;">
+      <el-empty v-if="!loading && records.length === 0" :description="keyword || typeFilter ? '未找到匹配的记录' : '暂无分析记录，触发一次 AI 巡检后在此查看'" />
+
+      <div v-if="total > pageSize" class="pagination-wrap">
         <el-pagination
           v-model:current-page="page"
           v-model:page-size="pageSize"
@@ -113,14 +128,18 @@
           <span>耗时：{{ detail.duration_ms }}ms</span>
           <span>Token：{{ formatTokens(detail.total_tokens) }}<template v-if="detail.tokens_estimated"> ≈</template></span>
           <span v-if="detail.cost_est != null">成本：¥{{ detail.cost_est.toFixed(4) }}</span>
-          <span v-if="detail.ref_id">关联：<span style="font-family: monospace;">{{ detail.ref_id }}</span></span>
+          <span v-if="detail.ref_id">关联：<span class="mono">{{ detail.ref_id }}</span></span>
         </div>
 
         <el-tabs v-model="activeTab">
           <el-tab-pane label="分析结论" name="result">
             <div class="markdown-body" v-html="renderMarkdown(detail.result)"></div>
           </el-tab-pane>
-          <el-tab-pane label="日志证据" name="logs" :disabled="!hasLogs">
+          <el-tab-pane :name="'logs'">
+            <template #label>
+              <span>日志证据</span>
+              <el-badge v-if="!hasLogs" is-dot class="logs-tab-badge" />
+            </template>
             <div v-if="hasLogs" class="logs-panel">
               <!-- 检索参数 -->
               <div class="logs-block" v-if="detail.logs?.query">
@@ -147,7 +166,7 @@
                   <el-table-column prop="signature" label="模式签名" min-width="260" show-overflow-tooltip />
                   <el-table-column label="首/末次" width="150">
                     <template #default="{ row }">
-                      <span v-if="row.first_at" style="font-size: 12px; color: var(--text-tertiary);">{{ row.first_at }} ~ {{ row.last_at }}</span>
+                      <span v-if="row.first_at" class="time-range">{{ row.first_at }} ~ {{ row.last_at }}</span>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -177,7 +196,7 @@ import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import {
   getAiAnalysisRecords, getAiAnalysisSummary, getAiAnalysisRecord,
-  type AiAnalysisRecordItem, type AiAnalysisRecordDetail,
+  type AiAnalysisRecordItem, type AiAnalysisRecordDetail, type AiAnalysisSummary,
 } from '../api'
 
 marked.setOptions({ breaks: true, gfm: true })
@@ -189,7 +208,11 @@ function getCssVar(name: string): string {
 function formatTokens(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
-  return String(n)
+  return n.toLocaleString('zh-CN')
+}
+
+function formatCost(n: number): string {
+  return n.toFixed(n < 0.01 ? 4 : 2)
 }
 
 function typeLabel(t: string): string {
@@ -226,7 +249,7 @@ const keyword = ref('')
 const typeFilter = ref('')
 
 const summaryLoading = ref(false)
-const summary = ref<{ today: any; month: any; daily_budget: number } | null>(null)
+const summary = ref<AiAnalysisSummary | null>(null)
 
 async function fetchSummary() {
   summaryLoading.value = true
@@ -289,16 +312,25 @@ async function openDetail(row: AiAnalysisRecordItem) {
 }
 
 // 预算展示
+const hasBudget = computed(() => (summary.value?.daily_budget ?? 0) > 0)
 const budgetLabel = computed(() => {
   const b = summary.value?.daily_budget ?? 0
   return b <= 0 ? '不限' : formatTokens(b)
 })
+const budgetUsagePct = computed(() => {
+  const b = summary.value?.daily_budget ?? 0
+  if (b <= 0) return 0
+  const used = summary.value?.today.total_tokens ?? 0
+  return Math.min(100, Math.round((used / b) * 1000) / 10)
+})
 const budgetUsageLabel = computed(() => {
   const b = summary.value?.daily_budget ?? 0
   if (b <= 0) return '未设置预算上限'
-  const used = summary.value?.today.total_tokens ?? 0
-  const pct = b > 0 ? ((used / b) * 100).toFixed(1) : '0'
-  return `已用 ${pct}%`
+  return `已用 ${budgetUsagePct.value}%`
+})
+const budgetProgressColor = computed(() => {
+  const pct = budgetUsagePct.value
+  return pct >= 100 ? 'var(--el-color-danger)' : pct >= 80 ? 'var(--el-color-warning)' : 'var(--cyan)'
 })
 const budgetUsageStyle = computed(() => {
   const b = summary.value?.daily_budget ?? 0
@@ -315,6 +347,38 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.mono {
+  font-family: monospace;
+  font-size: 12px;
+}
+.muted {
+  color: var(--text-tertiary, #909399);
+}
+.estimated-mark {
+  color: var(--text-tertiary, #909399);
+  font-size: 12px;
+}
+.link-btn {
+  padding: 0 6px;
+}
+.link-edit {
+  color: var(--cyan);
+}
+.time-range {
+  font-size: 12px;
+  color: var(--text-tertiary, #909399);
+}
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding: 0 24px 16px;
+}
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -331,6 +395,13 @@ onMounted(() => {
   font-size: 13px;
   color: var(--text-tertiary, #909399);
   margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.refresh-btn {
+  padding: 0;
+  margin-left: 4px;
 }
 .stat-value {
   font-size: 26px;
@@ -341,6 +412,9 @@ onMounted(() => {
   margin-top: 6px;
   font-size: 12px;
   color: var(--text-tertiary, #909399);
+}
+.budget-progress {
+  margin-top: 10px;
 }
 .detail-meta {
   display: flex;
@@ -355,6 +429,9 @@ onMounted(() => {
   max-height: 52vh;
   overflow-y: auto;
   line-height: 1.7;
+}
+.logs-tab-badge {
+  margin-left: 4px;
 }
 .logs-panel {
   display: flex;

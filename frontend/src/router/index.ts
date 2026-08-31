@@ -133,6 +133,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '告警源管理', icon: 'Link' },
   },
   {
+    path: '/alert-trigger-rules',
+    name: 'AlertTriggerRules',
+    component: () => import('../views/AlertTriggerRules.vue'),
+    meta: { title: 'LTS 触发规则', icon: 'Bell' },
+  },
+  {
     path: '/alert-history',
     name: 'AlertHistory',
     component: () => import('../views/AlertHistory.vue'),

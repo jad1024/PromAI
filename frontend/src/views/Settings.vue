@@ -64,6 +64,29 @@
     </div>
 
     <div class="form-section">
+      <h3><el-icon :size="16" :color="getCssVar('--cyan')"><Bell /></el-icon> LTS 告警巡检与 AI 预算</h3>
+      <p class="section-desc">华为云 LTS 日志巡检的防抖与成本控制，修改后即时生效（无需重启）</p>
+      <el-form :model="form" label-width="160px" style="max-width: 600px;">
+        <el-form-item label="触发冷却（分钟）">
+          <el-input-number v-model="ltsCooldownMinutes" :min="0" :max="1440" style="width: 100%;" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">同规则同告警指纹冷却期内只触发一次分析，0 = 不冷却；默认 30 分钟</div>
+        </el-form-item>
+        <el-form-item label="并发上限">
+          <el-input-number v-model="ltsMaxConcurrency" :min="1" :max="20" style="width: 100%;" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">同时进行的 LTS 巡检数，超出直接跳过（告警风暴防堆积）；默认 2</div>
+        </el-form-item>
+        <el-form-item label="日 token 预算">
+          <el-input-number v-model="aiDailyTokenBudget" :min="0" :max="100000000" :step="50000" style="width: 100%;" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">超过后 LTS 巡检自动降级为纯通知（次日恢复），0 = 不限；默认 500000</div>
+        </el-form-item>
+        <el-form-item label="日志留档保留天数">
+          <el-input-number v-model="ltsLogsRetentionDays" :min="0" :max="365" style="width: 100%;" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">每天 03:00 清空超期的日志证据留档（token 统计保留），0 = 不清理；默认 30 天</div>
+        </el-form-item>
+      </el-form>
+    </div>
+
+    <div class="form-section">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><Brush /></el-icon> 主题设置</h3>
       <div class="theme-grid">
         <div
@@ -305,6 +328,8 @@ const form = ref<Record<string, string>>({
   ai_enabled: 'false', ai_default_model: '',
   platform_name: 'PromAI', platform_subtitle: '运维监控平台',
   report_signature: '由 PromAI AI 巡检自动生成',
+  ai_lts_cooldown_minutes: '30', ai_lts_max_concurrency: '2',
+  ai_daily_token_budget: '500000', ai_lts_logs_retention_days: '30',
 })
 const modelList = ref<AIModelForm[]>([])
 
@@ -319,6 +344,22 @@ const reportCleanupMaxAge = computed({
 const alertHistoryRetentionDays = computed({
   get: () => parseInt(form.value.alert_history_retention_days || '30'),
   set: (v: number) => { form.value.alert_history_retention_days = String(v) },
+})
+const ltsCooldownMinutes = computed({
+  get: () => parseInt(form.value.ai_lts_cooldown_minutes || '30') || 0,
+  set: (v: number) => { form.value.ai_lts_cooldown_minutes = String(v) },
+})
+const ltsMaxConcurrency = computed({
+  get: () => parseInt(form.value.ai_lts_max_concurrency || '2') || 1,
+  set: (v: number) => { form.value.ai_lts_max_concurrency = String(v) },
+})
+const aiDailyTokenBudget = computed({
+  get: () => parseInt(form.value.ai_daily_token_budget || '500000') || 0,
+  set: (v: number) => { form.value.ai_daily_token_budget = String(v) },
+})
+const ltsLogsRetentionDays = computed({
+  get: () => parseInt(form.value.ai_lts_logs_retention_days || '30') || 0,
+  set: (v: number) => { form.value.ai_lts_logs_retention_days = String(v) },
 })
 const aiEnabled = computed({
   get: () => form.value.ai_enabled === 'true',
@@ -402,6 +443,10 @@ async function handleSave() {
       platform_name: form.value.platform_name,
       platform_subtitle: form.value.platform_subtitle,
       report_signature: form.value.report_signature,
+      ai_lts_cooldown_minutes: form.value.ai_lts_cooldown_minutes,
+      ai_lts_max_concurrency: form.value.ai_lts_max_concurrency,
+      ai_daily_token_budget: form.value.ai_daily_token_budget,
+      ai_lts_logs_retention_days: form.value.ai_lts_logs_retention_days,
     }
     payload.ai_models = JSON.stringify(modelList.value)
     await updateSettings(payload)

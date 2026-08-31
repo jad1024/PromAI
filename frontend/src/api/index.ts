@@ -392,4 +392,47 @@ export const getAiAnalysisRecords = (params?: { page?: number; page_size?: numbe
 export const getAiAnalysisSummary = () => api.get<AiAnalysisSummary>('/ai-analysis-records/summary')
 export const getAiAnalysisRecord = (id: number) => api.get<AiAnalysisRecordDetail>(`/ai-analysis-records/${id}`)
 
+// ===== LTS 告警触发规则 =====
+export interface TriggerMatcher {
+  field: string
+  operator: string
+  value: string
+}
+export interface AlertTriggerRule {
+  id?: number
+  name: string
+  description: string
+  matchers_json: string
+  source_id?: number | null
+  log_group_id: string
+  log_stream_id: string
+  time_window_minutes: number
+  keywords: string
+  level_filter: string
+  limit: number
+  inspection_template_id?: number | null
+  notify_channel_ids?: number[]
+  enabled: boolean
+}
+export interface TriggerRuleTestResult {
+  rule_id: number
+  scanned: number
+  matched: number
+  matched_list: { fingerprint: string; rule_name: string; severity: string; state: string; occurred_at: string }[]
+}
+export interface LTSTokenStats {
+  items: { day: string; type: string; model_name: string; calls: number; prompt_tokens: number; completion_tokens: number; total_tokens: number; cost_est: number }[]
+  today_total_tokens: number
+  today_calls: number
+  daily_budget: number
+}
+
+export const getAlertTriggerRules = () => api.get<AlertTriggerRule[]>('/alert-trigger-rules')
+export const createAlertTriggerRule = (r: AlertTriggerRule) => api.post<AlertTriggerRule>('/alert-trigger-rules', r)
+export const updateAlertTriggerRule = (id: number, r: AlertTriggerRule) => api.put<AlertTriggerRule>(`/alert-trigger-rules/${id}`, r)
+export const deleteAlertTriggerRule = (id: number) => api.delete(`/alert-trigger-rules/${id}`)
+export const testAlertTriggerRule = (id: number, limit = 100) =>
+  api.post<TriggerRuleTestResult>(`/alert-trigger-rules/${id}/test?limit=${limit}`)
+export const getLTSTokenStats = (days = 30) => api.get<LTSTokenStats>('/alert-trigger-rules/token-stats', { params: { days } })
+
 export default api
