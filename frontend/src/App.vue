@@ -143,6 +143,10 @@
               <el-icon><List /></el-icon>
               <span>巡检记录</span>
             </el-menu-item>
+            <el-menu-item index="/portscan">
+              <el-icon><Aim /></el-icon>
+              <span>敏感端口检测</span>
+            </el-menu-item>
             <el-menu-item index="/user-manual">
               <el-icon><Reading /></el-icon>
               <span>使用手册</span>

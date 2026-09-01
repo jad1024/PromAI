@@ -4,7 +4,8 @@ import type {
   DataSource, MetricType, MetricConfig,
   NotificationChannel, CronJob, ReportRecord,
   InspectRecord, InspectRequest, DashboardStats,
-  SyncSource, SyncLog, AiSkill
+  SyncSource, SyncLog, AiSkill,
+  PortScanTask, PortScanResult, PortInfo
 } from '../types'
 
 const api = axios.create({
@@ -344,5 +345,18 @@ export const getAISkills = () =>
 export const createAISkill = (s: AiSkill) => api.post<AiSkill>('/ai/skills', s)
 export const updateAISkill = (name: string, s: AiSkill) => api.post(`/ai/skills/${name}`, s)
 export const deleteAISkill = (name: string) => api.delete(`/ai/skills/${name}`)
+
+// ===== 敏感端口扫描 =====
+export const createPortScan = (targets: string, ports: number[]) =>
+  api.post<{ success: boolean; task_id: string; total_targets: number; total_ports: number; message: string }>('/portscan', { targets, ports })
+export const getPortScanTasks = (params?: { page?: number; page_size?: number }) =>
+  api.get<{ items: PortScanTask[]; total: number; page: number; page_size: number }>('/portscan/tasks', { params })
+export const getPortScanTask = (id: number) => api.get<PortScanTask>(`/portscan/tasks/${id}`)
+export const getPortScanResults = (id: number) =>
+  api.get<{ items: PortScanResult[]; total: number }>(`/portscan/tasks/${id}/results`)
+export const deletePortScanTask = (id: number) => api.delete(`/portscan/tasks/${id}`)
+export const getPortScanPorts = () => api.get<{ items: PortInfo[] }>('/portscan/ports')
+export const downloadPortScanReport = (id: number) =>
+  api.get(`/portscan/tasks/${id}/export`, { responseType: 'blob' })
 
 export default api

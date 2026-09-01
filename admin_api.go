@@ -375,6 +375,11 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/inspect", logged(auth(a.handleInspect)))
 	mux.HandleFunc("/api/promai/inspect/records", logged(auth(a.handleInspectRecords)))
 	mux.HandleFunc("/api/promai/inspect/task/", logged(auth(a.handleInspectTask)))
+	// ===== 敏感端口扫描 =====
+	mux.HandleFunc("/api/promai/portscan", logged(auth(a.handlePortScanCreate)))
+	mux.HandleFunc("/api/promai/portscan/ports", logged(auth(a.handlePortScanPorts)))
+	mux.HandleFunc("/api/promai/portscan/tasks", logged(auth(a.handlePortScanTasks)))
+	mux.HandleFunc("/api/promai/portscan/tasks/", logged(auth(a.handlePortScanTaskByID)))
 	mux.HandleFunc("/api/promai/ai/skills/manifest", logged(auth(a.handleAISkillManifest)))
 	mux.HandleFunc("/api/promai/ai/skills/stats/trend", logged(auth(a.handleAISkillTrend)))
 	mux.HandleFunc("/api/promai/ai/skills/stats", logged(auth(a.handleAISkillStats)))

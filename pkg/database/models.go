@@ -638,6 +638,37 @@ type ExternalRule struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// PortScanTask 敏感端口扫描任务（手动触发，不接通知链路，独立报告）。
+type PortScanTask struct {
+	ID           uint       `gorm:"primaryKey" json:"id"`
+	TaskID       string     `gorm:"size:100;index" json:"task_id"`
+	TargetsJSON  string     `gorm:"type:text" json:"-"` // 目标 IP 列表 JSON 数组
+	PortsJSON    string     `gorm:"type:text" json:"-"` // 端口列表 JSON 数组
+	Status       string     `gorm:"size:50;default:running" json:"status"` // running / completed / failed
+	TotalTargets int        `json:"total_targets"`
+	TotalPorts   int        `json:"total_ports"`
+	OpenPorts    int        `json:"open_ports"` // 探测到的开放敏感端口数
+	Message      string     `gorm:"size:500" json:"message"`
+	Error        string     `gorm:"size:500" json:"error"`
+	StartedAt    time.Time  `json:"started_at"`
+	CompletedAt  *time.Time `json:"completed_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// PortScanResult 单条端口探测结果（IP + 端口 -> 开放状态/风险）。
+type PortScanResult struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	TaskID    string    `gorm:"size:100;index" json:"task_id"`
+	IP        string    `gorm:"size:64;index" json:"ip"`
+	Port      int       `gorm:"index" json:"port"`
+	PortName  string    `gorm:"size:100" json:"port_name"` // 端口服务名，如 ssh / mysql
+	State     string    `gorm:"size:20" json:"state"`      // open / closed / timeout / refused
+	Risk      string    `gorm:"size:20" json:"risk"`       // high / medium / low
+	LatencyMs int64     `json:"latency_ms"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 func AutoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&DataSource{},
@@ -668,5 +699,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&AiAnalysisRecord{},
 		&ExternalAlertSource{},
 		&ExternalRule{},
+		// 敏感端口扫描
+		&PortScanTask{},
+		&PortScanResult{},
 	)
 }

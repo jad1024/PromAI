@@ -72,6 +72,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '巡检记录', icon: 'List' },
   },
   {
+    path: '/portscan',
+    name: 'PortScan',
+    component: () => import('../views/PortScan.vue'),
+    meta: { title: '敏感端口检测', icon: 'Aim' },
+  },
+  {
     path: '/templates',
     name: 'Templates',
     component: () => import('../views/InspectionTemplates.vue'),

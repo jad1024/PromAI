@@ -183,3 +183,38 @@ export interface InspectRequest {
   metric_config_ids?: number[]
   metric_type_ids?: number[]
 }
+
+// ===== 敏感端口扫描 =====
+export interface PortInfo {
+  port: number
+  name: string
+  risk: 'high' | 'medium' | 'low'
+}
+
+export interface PortScanTask {
+  id: number
+  task_id: string
+  targets: string[]
+  ports: number[]
+  status: 'running' | 'completed' | 'failed'
+  total_targets: number
+  total_ports: number
+  open_ports: number
+  message: string
+  error: string
+  started_at: string
+  completed_at: string | null
+  created_at: string
+}
+
+export interface PortScanResult {
+  id: number
+  task_id: string
+  ip: string
+  port: number
+  port_name: string
+  state: 'open' | 'closed' | 'timeout' | 'refused'
+  risk: 'high' | 'medium' | 'low'
+  latency_ms: number
+  created_at: string
+}
