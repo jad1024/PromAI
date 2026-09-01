@@ -87,13 +87,33 @@
             </el-select>
           </div>
         </el-form-item>
-        <el-form-item label="巡检指标">
+        <el-form-item label="巡检范围">
           <div style="width: 100%;">
-            <el-select v-model="selectedMetricTypeIds" placeholder="留空表示巡检全部有效指标（按分组指定）" multiple clearable filterable collapse-tags style="width: 100%;">
-              <el-option v-for="mt in metricTypes" :key="mt.id" :label="mt.type_name" :value="mt.id!" />
-            </el-select>
-            <div style="color: var(--text-tertiary); font-size: 12px; line-height: 1.4; margin-top: 4px;">按指标分组（如 L1-基础设施层）限定巡检范围；留空则巡检该数据源的全部指标</div>
+            <el-radio-group v-model="scopeMode">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="template">按模版</el-radio-button>
+              <el-radio-button value="type">按分组</el-radio-button>
+              <el-radio-button value="config">按指标</el-radio-button>
+            </el-radio-group>
+            <div style="color: var(--text-tertiary); font-size: 12px; line-height: 1.4; margin-top: 4px;">「全部」巡检该数据源绑定的模版/全部有效指标；后三项为互斥的精确范围</div>
           </div>
+        </el-form-item>
+        <el-form-item v-if="scopeMode === 'template'" label="巡检模版">
+          <el-select v-model="selectedTemplateIds" multiple filterable collapse-tags placeholder="选择一个或多个模版（指标合并）" style="width: 100%;">
+            <el-option v-for="t in templates" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="scopeMode === 'type'" label="指标分组">
+          <el-select v-model="selectedMetricTypeIds" placeholder="按指标分组（如 L1-基础设施层）" multiple clearable filterable collapse-tags style="width: 100%;">
+            <el-option v-for="mt in metricTypes" :key="mt.id" :label="mt.type_name" :value="mt.id!" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="scopeMode === 'config'" label="具体指标">
+          <el-select v-model="selectedMetricConfigIds" multiple filterable collapse-tags placeholder="选择具体指标" style="width: 100%;">
+            <el-option-group v-for="mt in metricTypes" :key="mt.id" :label="mt.type_name">
+              <el-option v-for="cfg in mt.configs || []" :key="cfg.id" :label="cfg.name" :value="cfg.id!" />
+            </el-option-group>
+          </el-select>
         </el-form-item>
         <el-form-item label="并发批次">
           <el-input-number v-model="form.batch_size" :min="0" :max="500" :step="5" style="width: 100%;" controls-position="right" />
@@ -134,7 +154,7 @@ import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { getCronJobs, createCronJob, updateCronJob, deleteCronJob, triggerCronJobAIAnalyze, getAllDataSources, getAllNotifications, getMetricTypes } from '../api'
+import { getCronJobs, createCronJob, updateCronJob, deleteCronJob, triggerCronJobAIAnalyze, getAllDataSources, getAllNotifications, getMetricTypes, getAllTemplates } from '../api'
 import type { CronJob, DataSource, NotificationChannel, MetricType } from '../types'
 
 function getCssVar(name: string): string {
@@ -153,6 +173,11 @@ const formRef = ref<FormInstance>()
 const notifChannelIds = ref<number[]>([])
 const selectedDSIds = ref<number[]>([])
 const selectedMetricTypeIds = ref<number[]>([])
+const selectedMetricConfigIds = ref<number[]>([])
+const selectedTemplateIds = ref<number[]>([])
+const templates = ref<any[]>([])
+// 巡检范围：all=全部 / template=按模版 / type=按分组 / config=按具体指标
+const scopeMode = ref<'all' | 'template' | 'type' | 'config'>('all')
 const aiAnalyzingId = ref<number | null>(null)
 const form = ref<CronJob>({ name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, ai_only_abnormal: false, batch_size: 0 })
 const rules = {
@@ -182,10 +207,28 @@ function notifNames(channels: string | undefined | null) {
 }
 
 function metricScopeNames(row: CronJob) {
+  // 优先级与后端一致：模版 > 具体指标 > 分组
+  if (row.template_ids) {
+    let ids: number[] = []
+    try { ids = JSON.parse(row.template_ids) } catch { ids = [] }
+    const names = ids.map(id => templates.value.find(t => t.id === id)?.name).filter(Boolean)
+    if (names.length) return '模版：' + names.join('、')
+  }
+  if (row.metric_config_ids) {
+    let ids: number[] = []
+    try { ids = JSON.parse(row.metric_config_ids) } catch { ids = [] }
+    if (ids.length) {
+      const nameMap = new Map<number, string>()
+      metricTypes.value.forEach(mt => (mt.configs || []).forEach(c => { if (c.id) nameMap.set(c.id, c.name) }))
+      const names = ids.map(id => nameMap.get(id)).filter(Boolean)
+      return names.length ? '指标：' + names.join('、') : `指标 ${ids.length} 个`
+    }
+  }
   if (row.metric_type_ids) {
     let ids: number[] = []
     try { ids = JSON.parse(row.metric_type_ids) } catch { ids = [] }
-    return ids.map(id => metricTypes.value.find(t => t.id === id)?.type_name).filter(Boolean).join('、')
+    const names = ids.map(id => metricTypes.value.find(t => t.id === id)?.type_name).filter(Boolean)
+    if (names.length) return names.join('、')
   }
   return ''
 }
@@ -210,11 +253,21 @@ watch(selectedMetricTypeIds, (ids) => {
   form.value.metric_type_ids = ids.length > 0 ? JSON.stringify(ids) : ''
 })
 
+// Sync form.metric_config_ids with selectedMetricConfigIds
+watch(selectedMetricConfigIds, (ids) => {
+  form.value.metric_config_ids = ids.length > 0 ? JSON.stringify(ids) : ''
+})
+
+// Sync form.template_ids with selectedTemplateIds
+watch(selectedTemplateIds, (ids) => {
+  form.value.template_ids = ids.length > 0 ? JSON.stringify(ids) : ''
+})
+
 async function fetchData() {
   loading.value = true
   try {
-    const [jr, dr, nr, mr] = await Promise.all([getCronJobs(), getAllDataSources(), getAllNotifications(), getMetricTypes()])
-    jobs.value = jr.data; datasources.value = dr.data; notifications.value = nr.data; metricTypes.value = mr.data
+    const [jr, dr, nr, mr, tr] = await Promise.all([getCronJobs(), getAllDataSources(), getAllNotifications(), getMetricTypes(), getAllTemplates()])
+    jobs.value = jr.data; datasources.value = dr.data; notifications.value = nr.data; metricTypes.value = mr.data; templates.value = tr.data || []
   } finally { loading.value = false }
 }
 
@@ -224,6 +277,9 @@ function openCreate() {
   notifChannelIds.value = []
   selectedDSIds.value = []
   selectedMetricTypeIds.value = []
+  selectedMetricConfigIds.value = []
+  selectedTemplateIds.value = []
+  scopeMode.value = 'all'
   dialogVisible.value = true
 }
 function openEdit(row: CronJob) {
@@ -232,6 +288,12 @@ function openEdit(row: CronJob) {
   try { notifChannelIds.value = row.notify_channels ? JSON.parse(row.notify_channels) : [] } catch { notifChannelIds.value = [] }
   try { selectedDSIds.value = row.datasource_ids ? JSON.parse(row.datasource_ids) : [] } catch { selectedDSIds.value = [] }
   try { selectedMetricTypeIds.value = row.metric_type_ids ? JSON.parse(row.metric_type_ids) : [] } catch { selectedMetricTypeIds.value = [] }
+  try { selectedMetricConfigIds.value = row.metric_config_ids ? JSON.parse(row.metric_config_ids) : [] } catch { selectedMetricConfigIds.value = [] }
+  try { selectedTemplateIds.value = row.template_ids ? JSON.parse(row.template_ids) : [] } catch { selectedTemplateIds.value = [] }
+  // 根据回填值推断当前范围模式（优先级与后端一致）
+  scopeMode.value = selectedTemplateIds.value.length ? 'template'
+    : selectedMetricConfigIds.value.length ? 'config'
+    : selectedMetricTypeIds.value.length ? 'type' : 'all'
   dialogVisible.value = true
 }
 
@@ -240,8 +302,13 @@ async function handleSave() {
   if (!valid) return
   saving.value = true
   try {
-    if (editingId.value) { await updateCronJob(editingId.value, form.value); ElMessage.success('更新成功') }
-    else { await createCronJob(form.value); ElMessage.success('创建成功') }
+    // 互斥范围：只保留当前 scopeMode 对应的字段，其余清空，避免残留旧选择
+    const payload = { ...form.value }
+    if (scopeMode.value !== 'template') payload.template_ids = ''
+    if (scopeMode.value !== 'type') payload.metric_type_ids = ''
+    if (scopeMode.value !== 'config') payload.metric_config_ids = ''
+    if (editingId.value) { await updateCronJob(editingId.value, payload); ElMessage.success('更新成功') }
+    else { await createCronJob(payload); ElMessage.success('创建成功') }
     dialogVisible.value = false; await fetchData()
   } catch (e: any) { ElMessage.error(e.message) } finally { saving.value = false }
 }

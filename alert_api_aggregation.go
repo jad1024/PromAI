@@ -45,6 +45,19 @@ type incidentKey struct {
 	Alertname string
 }
 
+// incidentSupplements 补充指标：按 alertname（带 [源名] 前缀的 rule_name）预计算的
+// 窗口统计，用于故障卡片并列参考。
+type incidentSupplements struct {
+	// PeakInstanceCount 窗口内 alert_history 中曾出现过的全部不重复 instance 数
+	// （基于 fingerprint 去重），等价于「这个 alertname 一共影响了多少独立实例」，
+	// 含已恢复的实例，能回答「我说的 16 个独立实例到底有多少」。
+	PeakInstanceCount int
+	// TotalFiringCount 窗口内 alert_history 中 event_type='firing' 的总记录数，
+	// 即平台实际推送的告警事件总数（含 n9e 周期性重发的重复推送），
+	// 能反映告警风暴 / 反复抖动的强度。
+	TotalFiringCount int
+}
+
 // alertInstance 一次完整告警实例（去重后）。
 // 由 AlertHistory 中同一 fingerprint 的连续 firing 段（含首尾 resolved）合并而成。
 type alertInstance struct {
@@ -93,6 +106,14 @@ type incidentListItem struct {
 	LastEventAt   time.Time `json:"last_event_at"`
 	Storm         bool      `json:"storm"`
 	Datasources   []string  `json:"datasources"`
+	// 补充指标（不改 AlertCount/InstanceCount 主指标语义，作为并列参考）：
+	//   PeakInstanceCount  窗口内曾触发过该故障的全部不重复实例数（含已恢复的），
+	//                       用于看出「这个 alertname 一共影响了多少实例」。
+	//   TotalFiringCount   窗口内 alert_history 中 event_type='firing' 的总记录数，
+	//                       即 n9e/平台实际推送的告警事件总数（含重复推送/重发），
+	//                       用于识别「反复抖动」「告警风暴」。
+	PeakInstanceCount int `json:"peak_instance_count"`
+	TotalFiringCount  int `json:"total_firing_count"`
 }
 
 // incidentDetailFull 内部使用的完整故障（带 alerts）
@@ -111,6 +132,9 @@ type incidentDetailFull struct {
 	Datasources   []string           `json:"datasources"`
 	Alerts        []alertInIncident  `json:"alerts"`
 	InstanceSet   map[string]struct{} `json:"-"` // 用于内部去重计数
+	// 补充指标（不影响现有 AlertCount/InstanceCount 计算，仅用于故障卡片展示）
+	PeakInstanceCount int `json:"peak_instance_count"`
+	TotalFiringCount  int `json:"total_firing_count"`
 }
 
 // incidentListResp 列表响应
@@ -349,7 +373,11 @@ func dedupToAlerts(rows []database.AlertHistory) []alertInstance {
 // aggregateIncidents 把告警按 alertname 在时间窗内聚合为故障。
 // 同一 alertname 下的所有实例/集群告警（去重后）按时间顺序归入同一故障，
 // 跨窗口则开新故障。每个故障内统计：告警数、不重复实例数、涉及集群列表、风暴标记。
-func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig) []incidentDetailFull {
+//
+// supplements 是由调用方按 rule_name 一次性 GROUP BY alert_history 算出的补充指标
+// （峰值实例数 = 窗口内曾出现的不重复 instance 数；累计触发次数 = firing 事件总数），
+// 用作故障卡片并列参考，不影响现有 AlertCount/InstanceCount 语义。
+func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig, supplements map[string]incidentSupplements) []incidentDetailFull {
 	incidentsByKey := map[incidentKey][]*incidentDetailFull{}
 	for _, a := range alerts {
 		// 故障主键：alertname
@@ -423,6 +451,11 @@ func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig) []incidentDet
 			if cfg.StormThreshold > 0 && inc.AlertCount > cfg.StormThreshold {
 				inc.Storm = true
 			}
+			// 补充指标：按 alertname 从一次性 GROUP BY 结果里取（避免 N+1 查询）
+			if supp, ok := supplements[inc.Alertname]; ok {
+				inc.PeakInstanceCount = supp.PeakInstanceCount
+				inc.TotalFiringCount = supp.TotalFiringCount
+			}
 			all = append(all, inc)
 		}
 	}
@@ -436,6 +469,33 @@ func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig) []incidentDet
 	return out
 }
 
+// computeIncidentSupplements 按 rule_name 一次性从 alert_history 行算出补充指标：
+//   - PeakInstanceCount：窗口内曾出现的不重复 fingerprint 数（即独立实例数，含已恢复）
+//   - TotalFiringCount：窗口内 event_type='firing' 的总记录数（即平台推送的告警事件总数，含重发）
+//
+// 用 Go 内存聚合避免 N+1 SQL；输入 rows 已是窗口内全集（受 filterAlertname/filterInstance 等过滤影响）。
+// 同一 rule_name 的多个历史故障会合并为一份指标（与 aggregateIncidents 内的所有 incident 共享）。
+func computeIncidentSupplements(rows []database.AlertHistory) map[string]incidentSupplements {
+	out := map[string]incidentSupplements{}
+	seenFP := map[string]map[string]struct{}{}
+	for i := range rows {
+		r := &rows[i]
+		s := out[r.RuleName]
+		if seenFP[r.RuleName] == nil {
+			seenFP[r.RuleName] = map[string]struct{}{}
+		}
+		if _, ok := seenFP[r.RuleName][r.Fingerprint]; !ok {
+			seenFP[r.RuleName][r.Fingerprint] = struct{}{}
+			s.PeakInstanceCount++
+		}
+		if r.EventType == "firing" {
+			s.TotalFiringCount++
+		}
+		out[r.RuleName] = s
+	}
+	return out
+}
+
 func toListItem(d incidentDetailFull) incidentListItem {
 	return incidentListItem{
 		Key: d.Key, Alertname: d.Alertname, Severity: d.Severity,
@@ -443,6 +503,7 @@ func toListItem(d incidentDetailFull) incidentListItem {
 		InstanceCount: d.InstanceCount, ClusterCount: d.ClusterCount,
 		FirstFiredAt: d.FirstFiredAt, LastEventAt: d.LastEventAt,
 		Storm: d.Storm, Datasources: d.Datasources,
+		PeakInstanceCount: d.PeakInstanceCount, TotalFiringCount: d.TotalFiringCount,
 	}
 }
 
@@ -501,6 +562,8 @@ func (a *AdminAPI) handleAlertIncidents(w http.ResponseWriter, r *http.Request) 
 
 	filterAlertname := strings.TrimSpace(p.Get("alertname"))
 	filterInstance := strings.TrimSpace(p.Get("instance"))
+	// 状态过滤：ongoing=告警中 / resolved=已恢复，空=全部
+	filterState := strings.TrimSpace(p.Get("state"))
 
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	q := database.DB.Model(&database.AlertHistory{}).
@@ -532,10 +595,16 @@ func (a *AdminAPI) handleAlertIncidents(w http.ResponseWriter, r *http.Request) 
 	}
 	alerts := dedupToAlerts(rows)
 	totalAlerts := len(alerts)
-	all := aggregateIncidents(alerts, cfg)
+	// 一次性按 rule_name 计算补充指标（PeakInstanceCount = 窗口内曾出现的不重复 fingerprint 数；
+	// TotalFiringCount = 窗口内 firing 事件总数），避免在 aggregateIncidents 内做 N+1 查询。
+	supplements := computeIncidentSupplements(rows)
+	all := aggregateIncidents(alerts, cfg, supplements)
 
 	items := make([]incidentListItem, 0, len(all))
 	for _, inc := range all {
+		if filterState != "" && inc.State != filterState {
+			continue
+		}
 		if filterInstance != "" {
 			// 故障级筛选：任一告警匹配即保留
 			matched := false
@@ -608,7 +677,7 @@ func (a *AdminAPI) handleAlertIncidentDetail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	alerts := dedupToAlerts(rows)
-	all := aggregateIncidents(alerts, cfg)
+	all := aggregateIncidents(alerts, cfg, computeIncidentSupplements(rows))
 	for _, inc := range all {
 		if inc.Key == targetKey {
 			writeJSON(w, map[string]interface{}{
@@ -691,7 +760,7 @@ func (a *AdminAPI) handleAlertIncidentDelete(w http.ResponseWriter, r *http.Requ
 		writeError(w, 500, "查询告警历史失败: "+err.Error())
 		return
 	}
-	all := aggregateIncidents(dedupToAlerts(rows), cfg)
+	all := aggregateIncidents(dedupToAlerts(rows), cfg, computeIncidentSupplements(rows))
 	fps, matched := collectIncidentFingerprints(all, body.Keys)
 	if matched == 0 {
 		writeError(w, 404, "故障不存在或已过期")
@@ -749,7 +818,7 @@ func (a *AdminAPI) handleAlertNoiseTop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alerts := dedupToAlerts(rows)
-	all := aggregateIncidents(alerts, cfg)
+	all := aggregateIncidents(alerts, cfg, computeIncidentSupplements(rows))
 
 	type item struct {
 		Alertname     string   `json:"alertname"`

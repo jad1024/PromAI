@@ -353,6 +353,8 @@ export interface AlertIncident {
   storm: boolean
   datasources: string[]
   alerts?: AlertInIncident[]
+  peak_instance_count?: number // 窗口内曾出现的不重复实例数（含已恢复）
+  total_firing_count?: number // 窗口内 firing 事件总数（含重发）
 }
 
 export interface AlertIncidentList {

@@ -103,13 +103,20 @@
         <div ref="noiseEl" class="chart" :style="{ height: noiseHeight + 'px' }"></div>
       </div>
 
+      <!-- 状态切换：告警中 / 已恢复 / 全部 -->
+      <el-tabs v-model="stateTab" class="state-tabs" @tab-change="onStateTabChange">
+        <el-tab-pane label="告警中" name="ongoing" />
+        <el-tab-pane label="已恢复" name="resolved" />
+        <el-tab-pane label="全部" name="all" />
+      </el-tabs>
+
       <!-- 故障列表 -->
       <div v-if="loading" class="list-state">
         <el-icon class="is-loading" :size="24"><Loading /></el-icon>
       </div>
       <div v-else-if="incidents.length === 0" class="list-state empty">
         <el-icon :size="36"><Bell /></el-icon>
-        <p>所选时间窗内没有故障</p>
+        <p>{{ emptyText }}</p>
       </div>
 
       <div v-else class="incident-list">
@@ -135,6 +142,18 @@
                   <el-icon style="vertical-align:-2px;"><Monitor /></el-icon>
                   {{ inc.instance_count }} 实例
                 </el-tag>
+                <el-tooltip v-if="inc.peak_instance_count && inc.peak_instance_count > inc.instance_count" placement="top" content="窗口内曾出现的不重复实例数（含已恢复），大于当前活跃实例数说明已有实例自动恢复过">
+                  <el-tag size="small" type="warning" plain>
+                    <el-icon style="vertical-align:-2px;"><DataLine /></el-icon>
+                    峰值 {{ inc.peak_instance_count }} 实例
+                  </el-tag>
+                </el-tooltip>
+                <el-tooltip v-if="inc.total_firing_count && inc.total_firing_count > inc.alert_count" placement="top" :content="`窗口内累计触发的告警事件总数 ${inc.total_firing_count}（含 n9e 周期性重发的重复推送），大于独立告警数 ${inc.alert_count} 说明存在反复抖动`">
+                  <el-tag size="small" type="warning" plain>
+                    <el-icon style="vertical-align:-2px;"><Refresh /></el-icon>
+                    累计 {{ inc.total_firing_count }} 次告警事件
+                  </el-tag>
+                </el-tooltip>
                 <el-tag v-if="inc.cluster_count > 1" size="small" class="tag-cluster">跨 {{ inc.cluster_count }} 集群</el-tag>
               </div>
               <div class="inc-times">
@@ -348,6 +367,9 @@ const filters = ref<{ severity: string; datasource_id: number | ''; alertname: s
   severity: '', datasource_id: '', alertname: '', instance: '',
 })
 
+// 状态 Tab：ongoing=告警中 / resolved=已恢复 / all=全部
+const stateTab = ref<'ongoing' | 'resolved' | 'all'>('all')
+
 // 详情抽屉
 const drawerOpen = ref(false)
 const detailLoading = ref(false)
@@ -376,6 +398,11 @@ const compressionRatio = computed(() => {
     return Math.round((agg.value.total_raw / agg.value.total_incidents) * 10) / 10
   }
   return 0
+})
+const emptyText = computed(() => {
+  if (stateTab.value === 'ongoing') return '当前没有「告警中」的故障'
+  if (stateTab.value === 'resolved') return '当前没有「已恢复」的故障'
+  return '所选时间窗内没有故障'
 })
 const tlIncidents = computed(() => incidents.value.slice(0, 25))
 const tlHeight = computed(() => Math.max(140, tlIncidents.value.length * 26 + 46))
@@ -608,6 +635,7 @@ async function fetchIncidents() {
     if (filters.value.datasource_id) params.datasource_id = filters.value.datasource_id
     if (filters.value.alertname) params.alertname = filters.value.alertname
     if (filters.value.instance) params.instance = filters.value.instance
+    if (stateTab.value === 'ongoing' || stateTab.value === 'resolved') params.state = stateTab.value
     const resp = await getAlertIncidents(params)
     const data = resp.data
     incidents.value = data.incidents || []
@@ -639,6 +667,10 @@ async function fetchAll() {
   await nextTick()
   renderTimeline()
   renderNoise()
+}
+
+function onStateTabChange() {
+  fetchAll()
 }
 
 function toggleAutoRefresh(v: boolean) {
@@ -735,8 +767,10 @@ onBeforeUnmount(() => {
 .ar-label { color: var(--el-text-color-secondary); font-size: 12px; }
 .updated-at { color: var(--el-text-color-secondary); font-size: 12px; }
 
-.stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }
-.s-card { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 8px; background: var(--el-fill-color-light, #f8fafc); }
+.state-tabs { margin-bottom: 4px; }
+.state-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }
+
+.stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }.s-card { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 8px; background: var(--el-fill-color-light, #f8fafc); }
 .s-icon { width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #fff; }
 .s-icon.raw { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
 .s-icon.evt { background: linear-gradient(135deg, #06b6d4, #0ea5e9); }

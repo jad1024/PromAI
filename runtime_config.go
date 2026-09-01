@@ -104,6 +104,37 @@ func loadTemplateMetricConfigs(templateIDs []uint) ([]database.MetricConfig, err
 	return merged, nil
 }
 
+// resolveScopedMetricConfigs 按显式指定的巡检范围解析指标配置。
+// 优先级：模板(templateIDs) > 具体指标(metricConfigIDs) > 指标分组(metricTypeIDs)。
+// 返回 nil 表示未指定范围（调用方应走数据源绑定模板/全部有效指标）。
+// 模板为多选合并，并应用各自的阈值/单位覆盖（复用 loadTemplateMetricConfigs）。
+func resolveScopedMetricConfigs(templateIDs, metricConfigIDs, metricTypeIDs []uint) []database.MetricConfig {
+	// 1) 模板优先（多选合并 + 覆盖）
+	if len(templateIDs) > 0 {
+		if configs, err := loadTemplateMetricConfigs(templateIDs); err == nil && len(configs) > 0 {
+			return configs
+		}
+	}
+
+	// 2) 具体指标
+	if len(metricConfigIDs) > 0 {
+		var configs []database.MetricConfig
+		database.DB.Where("id IN ?", metricConfigIDs).
+			Order("metric_type_id asc, sort_order asc, id asc").Find(&configs)
+		return configs
+	}
+
+	// 3) 指标分组
+	if len(metricTypeIDs) > 0 {
+		var configs []database.MetricConfig
+		database.DB.Where("metric_type_id IN ?", metricTypeIDs).
+			Order("metric_type_id asc, sort_order asc, id asc").Find(&configs)
+		return configs
+	}
+
+	return nil
+}
+
 func buildRuntimeMetricConfig(base *config.Config, ds *database.DataSource, selectedConfigs []database.MetricConfig) *config.Config {
 	cfg := applyDatasourceProjectConfig(base, ds)
 	if len(selectedConfigs) == 0 && ds != nil {

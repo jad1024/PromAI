@@ -108,7 +108,6 @@ func parseN9EOne(raw map[string]interface{}) AlertEvent {
 		OccurredAt:  time.Now(),
 	}
 	ev.ExternalID = firstStr(raw, "rule_id", "alert_id", "id")
-	ev.RuleName = firstStr(raw, "rule_name", "alert_name", "name", "title")
 
 	// 状态：firing/resolved/pending/ok
 	switch strings.ToLower(firstStr(raw, "status", "state", "alert_state", "event_type")) {
@@ -136,6 +135,18 @@ func parseN9EOne(raw map[string]interface{}) AlertEvent {
 	if s := firstStr(raw, "summary", "description", "alert_msg", "alert_content"); s != "" {
 		ev.Annotations["summary"] = s
 	}
+
+	// 规则名：n9e 的规则名标准字段在 labels.rulename（如"行情前置机检测异常"），
+	// 而顶层 raw.name / labels.name 是 metric 的业务维度（如"行情服务"），二者极易混淆。
+	// 若误把 name 当规则名，会导致不同规则、不同实例的告警被错误聚合到同一个 alertname 下。
+	// 优先级：labels.rulename > labels.alertname > 顶层 rule_name/alert_name > 顶层 title。
+	// 明确排除 name，避免业务维度污染规则名。
+	ev.RuleName = firstNonEmpty(
+		ev.Labels["rulename"],
+		ev.Labels["alertname"],
+		firstStr(raw, "rule_name", "alert_name"),
+		firstStr(raw, "title"),
+	)
 
 	ev.Value = firstFloat(raw, "value", "trigger_value", "triggerValue", "metric_value", "current_value")
 	ev.Threshold = firstFloat(raw, "threshold", "trigger_threshold", "alert_threshold")
@@ -755,19 +766,19 @@ func asMap(v interface{}) map[string]string {
 }
 
 // EnrichInstanceLabels 在计算指纹前，从 labels/annotations 中补齐可用于区分实例的维度。
-// 外部告警 webhook 常常只在 annotations.summary 里写 "192.168.x.x 7分区使用过高"，
+// 外部告警 webhook 常常只在 annotations.description/summary 里写明目标 IP:端口，
 // labels 里只有 alertname，导致多个实例被合并到同一个 fingerprint。
-// 该函数会把 IPv4、分区/挂载点、主机名等从 summary 提取出来回填到 labels。
+// 该函数会把 IPv4:端口、分区/挂载点、主机名等从 description/summary 提取出来回填到 labels。
 func EnrichInstanceLabels(ev *AlertEvent) {
 	if ev.Labels == nil {
 		ev.Labels = map[string]string{}
 	}
 
-	// 1. 优先从 labels/annotations 里直接取常见维度
+	// 1. 收集可用文本：description 优先于 summary 优先于 message
+	// n9e 的 blackbox 探测告警中，目标实例信息通常在 description（如"端口:188.31.25.247:18888无法使用"），
+	// 而 summary 可能是业务摘要（如"公司前置机总数"），没有 IP。仅看 summary 会漏掉真正的实例维度。
+	description := ev.Annotations["description"]
 	summary := ev.Annotations["summary"]
-	if summary == "" {
-		summary = ev.Annotations["description"]
-	}
 	if summary == "" {
 		summary = ev.Annotations["message"]
 	}
@@ -779,21 +790,29 @@ func EnrichInstanceLabels(ev *AlertEvent) {
 		}
 	}
 
-	// 3. 从 summary 里正则提取
-	if summary != "" {
-		// IPv4 地址（含可选端口）
-		if ev.Labels["instance"] == "" {
-			if m := regexp.MustCompile(`(\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?)`).FindString(summary); m != "" {
+	// 3. 从 description/summary 里正则提取 IP:端口
+	// 优先级：description > summary，因为 description 通常是具体错误描述，含真实目标 IP
+	if ev.Labels["instance"] == "" {
+		ipv4PortRe := regexp.MustCompile(`(\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?)`)
+		if description != "" {
+			if m := ipv4PortRe.FindString(description); m != "" {
 				ev.Labels["instance"] = m
 			}
 		}
-		// "7分区" / "sda1分区" / "/data 分区"
+		if ev.Labels["instance"] == "" && summary != "" {
+			if m := ipv4PortRe.FindString(summary); m != "" {
+				ev.Labels["instance"] = m
+			}
+		}
+	}
+
+	// 4. 分区/挂载点（只从 summary 提取，description 是具体错误描述）
+	if summary != "" {
 		if ev.Labels["device"] == "" && ev.Labels["mountpoint"] == "" {
 			if m := regexp.MustCompile(`(?i)(\d+|/[^\s,，]+|[a-zA-Z0-9_/-]+?)\s*分区`).FindStringSubmatch(summary); len(m) > 1 {
 				ev.Labels["device"] = m[1]
 			}
 		}
-		// 挂载点路径：
 		if ev.Labels["mountpoint"] == "" && ev.Labels["device"] == "" {
 			if m := regexp.MustCompile(`(/[a-zA-Z0-9_/.-]+)`).FindString(summary); m != "" {
 				ev.Labels["mountpoint"] = m
@@ -801,14 +820,23 @@ func EnrichInstanceLabels(ev *AlertEvent) {
 		}
 	}
 
-	// 4. 兜底：如果没有任何实例维度，就把 summary 里第一个非空短 token（不含中文标点和空格）作为 instance
+	// 5. 兜底：如果没有任何实例维度，就生成一个「实例摘要」仅用于展示。
+	// 注意：写入 Annotations 而非 Labels——它只是展示用摘要，不能参与 fingerprint 去重，
+	// 否则静态摘要文本会让同一 alertname 下本应区分的多个实例被错误合并成同一条告警。
 	if ev.Labels["instance"] == "" && ev.Labels["host"] == "" && ev.Labels["device"] == "" && ev.Labels["mountpoint"] == "" && ev.Labels["resource_name"] == "" {
-		if summary != "" {
-			// 取 summary 前 32 个字符作为实例摘要，避免过长
-			if len(summary) > 32 {
-				summary = summary[:32]
+		fallback := summary
+		if fallback == "" {
+			fallback = description
+		}
+		if fallback != "" {
+			if ev.Annotations == nil {
+				ev.Annotations = map[string]string{}
 			}
-			ev.Labels["instance_summary"] = summary
+			// 取前 32 个字符作为实例摘要，避免过长
+			if len(fallback) > 32 {
+				fallback = fallback[:32]
+			}
+			ev.Annotations["instance_summary"] = fallback
 		}
 	}
 }

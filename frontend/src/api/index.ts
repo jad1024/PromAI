@@ -305,7 +305,7 @@ export const getAlertEvaluatorStatus = () => api.get<EvaluatorStatus>('/alert/ev
 // 参考 FlashDuty/Nightingale 模型（按用户诉求简化）。通知层面的分组/去重/抑制由 Alertmanager 负责。
 export const getAlertIncidents = (params?: {
   hours?: number; datasource_id?: number; severity?: string; alertname?: string; instance?: string;
-  window_minutes?: number; storm_threshold?: number; resource_labels?: string; limit?: number
+  state?: string; window_minutes?: number; storm_threshold?: number; resource_labels?: string; limit?: number
 }) => api.get<AlertIncidentList>('/alert/incidents', { params })
 
 export const getAlertIncidentDetail = (params: {

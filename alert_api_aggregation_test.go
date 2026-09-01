@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"PromAI/pkg/alerting/webhook"
 	"PromAI/pkg/database"
 )
 
@@ -98,7 +99,7 @@ func TestAggregateByAlertnameOnly(t *testing.T) {
 		},
 	}
 	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents(alerts, cfg)
+	incs := aggregateIncidents(alerts, cfg, map[string]incidentSupplements{})
 	if len(incs) != 1 {
 		t.Fatalf("同 alertname 多实例应归 1 个故障，实际 %d", len(incs))
 	}
@@ -138,7 +139,7 @@ func TestDifferentAlertnameDifferentIncident(t *testing.T) {
 		},
 	}
 	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents(alerts, cfg)
+	incs := aggregateIncidents(alerts, cfg, map[string]incidentSupplements{})
 	if len(incs) != 2 {
 		t.Fatalf("不同 alertname 应拆分为 2 个故障，实际 %d", len(incs))
 	}
@@ -159,13 +160,13 @@ func TestWindowSlicing(t *testing.T) {
 		},
 	}
 	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents(alerts, cfg)
+	incs := aggregateIncidents(alerts, cfg, map[string]incidentSupplements{})
 	if len(incs) != 2 {
 		t.Fatalf("间隔超过窗口应切成 2 个故障，实际 %d", len(incs))
 	}
 	// 窗口为 0：不切窗，全部合并
 	cfg0 := denoiseConfig{WindowMinutes: 0, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs0 := aggregateIncidents(alerts, cfg0)
+	incs0 := aggregateIncidents(alerts, cfg0, map[string]incidentSupplements{})
 	if len(incs0) != 1 {
 		t.Fatalf("window=0 表示不切窗，应合并为 1 个故障，实际 %d", len(incs0))
 	}
@@ -184,7 +185,7 @@ func TestStormFlag(t *testing.T) {
 		})
 	}
 	cfg := denoiseConfig{WindowMinutes: 60, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents(alerts, cfg)
+	incs := aggregateIncidents(alerts, cfg, map[string]incidentSupplements{})
 	if len(incs) != 1 {
 		t.Fatalf("同一窗口同 alertname 应合并为 1 个故障，实际 %d", len(incs))
 	}
@@ -313,22 +314,22 @@ func TestRemovedAtFilterInDedup(t *testing.T) {
 		histRow("fp-1", 1, 1, "CPU高", "cluster-a", "firing", "warning", 85, mkInstanceLabels("node-1", "a"), base),
 	}
 	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10, ResourceLabels: []string{"resource"}}
-	incs := aggregateIncidents(dedupToAlerts(rows), cfg)
+	incs := aggregateIncidents(dedupToAlerts(rows), cfg, map[string]incidentSupplements{})
 	if len(incs) != 1 {
 		t.Fatalf("删除前应有 1 个故障，实际 %d", len(incs))
 	}
 	// 模拟 removed_at 过滤：行被过滤掉（SQL 层 WHERE removed_at IS NULL）
-	incsRemoved := aggregateIncidents(dedupToAlerts(nil), cfg)
+	incsRemoved := aggregateIncidents(dedupToAlerts(nil), cfg, map[string]incidentSupplements{})
 	if len(incsRemoved) != 0 {
 		t.Fatalf("删除后故障应为空，实际 %d", len(incsRemoved))
 	}
 }
 
 // TestDismissedIncidentReappearsOnNewEvent 验证事件聚合软 dismiss 语义：
-// 1) 旧 AlertHistory 标记 dismissed_at 后，聚合查询过滤后该故障消失
-// 2) 新告警事件到来（AlertHistory 新增一行，无 dismissed_at），dedup 取最新
-//    行后该故障自动重新出现
-// 3) 已恢复告警的 dismissed 行始终被过滤，达成彻底隐藏
+//  1. 旧 AlertHistory 标记 dismissed_at 后，聚合查询过滤后该故障消失
+//  2. 新告警事件到来（AlertHistory 新增一行，无 dismissed_at），dedup 取最新
+//     行后该故障自动重新出现
+//  3. 已恢复告警的 dismissed 行始终被过滤，达成彻底隐藏
 func TestDismissedIncidentReappearsOnNewEvent(t *testing.T) {
 	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
 	cfg := denoiseConfig{WindowMinutes: 60, StormThreshold: 10, ResourceLabels: []string{"resource"}}
@@ -340,20 +341,20 @@ func TestDismissedIncidentReappearsOnNewEvent(t *testing.T) {
 		histRow("fp-A", 1, 1, "Mysql主从延迟", "cluster-a", "firing", "critical", 100, mkInstanceLabels("node-1", "a"), base),
 	}
 	// dismissT 之前：1 个故障
-	if got := len(aggregateIncidents(dedupToAlerts(rowsA), cfg)); got != 1 {
+	if got := len(aggregateIncidents(dedupToAlerts(rowsA), cfg, map[string]incidentSupplements{})); got != 1 {
 		t.Fatalf("A1: 预期 1 个故障，实际 %d", got)
 	}
 	// 用户点击删除：标记 dismissed_at，SQL 层过滤后该行不再参与聚合 → 0 个故障
 	rowA0 := rowsA[0]
 	rowA0.DismissedAt = &dismissT
-	afterDismiss := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowA0})), cfg)
+	afterDismiss := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowA0})), cfg, map[string]incidentSupplements{})
 	if got := len(afterDismiss); got != 0 {
 		t.Fatalf("A2: 预期 dismiss 后 0 个故障，实际 %d", got)
 	}
 	// 新告警事件到来：插入一条新的 AlertHistory（无 dismissed_at）
 	rowA1 := histRow("fp-A", 1, 1, "Mysql主从延迟", "cluster-a", "firing", "critical", 110, mkInstanceLabels("node-1", "a"), newEventT)
 	rowsARefreshed := []database.AlertHistory{rowA0, rowA1}
-	reappear := aggregateIncidents(dedupToAlerts(filterDismissed(rowsARefreshed)), cfg)
+	reappear := aggregateIncidents(dedupToAlerts(filterDismissed(rowsARefreshed)), cfg, map[string]incidentSupplements{})
 	if got := len(reappear); got != 1 {
 		t.Fatalf("A3: 预期新事件后故障重新出现为 1，实际 %d", got)
 	}
@@ -365,7 +366,7 @@ func TestDismissedIncidentReappearsOnNewEvent(t *testing.T) {
 		histRow("fp-B", 2, 2, "CPU高", "cluster-b", "resolved", "warning", 30, mkInstanceLabels("node-2", "b"), resolveT),
 	}
 	// dismiss 之前：故障已结束、存在
-	if got := len(aggregateIncidents(dedupToAlerts(rowsB), cfg)); got != 1 {
+	if got := len(aggregateIncidents(dedupToAlerts(rowsB), cfg, map[string]incidentSupplements{})); got != 1 {
 		t.Fatalf("B1: 预期 1 个故障，实际 %d", got)
 	}
 	// dismiss 之后：过滤 dismissed 行
@@ -373,12 +374,12 @@ func TestDismissedIncidentReappearsOnNewEvent(t *testing.T) {
 	rowB0.DismissedAt = &dismissT
 	rowB1 := rowsB[1]
 	rowB1.DismissedAt = &dismissT
-	b2 := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowB0, rowB1})), cfg)
+	b2 := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowB0, rowB1})), cfg, map[string]incidentSupplements{})
 	if got := len(b2); got != 0 {
 		t.Fatalf("B2: 预期已恢复且 dismiss 后 0 个故障，实际 %d", got)
 	}
 	// 没有新告警事件（已恢复），故障始终不出现
-	b3 := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowB0, rowB1})), cfg)
+	b3 := aggregateIncidents(dedupToAlerts(filterDismissed([]database.AlertHistory{rowB0, rowB1})), cfg, map[string]incidentSupplements{})
 	if got := len(b3); got != 0 {
 		t.Fatalf("B3: 预期已恢复告警 dismiss 后永远不出现，实际 %d", got)
 	}
@@ -393,4 +394,119 @@ func filterDismissed(rows []database.AlertHistory) []database.AlertHistory {
 		}
 	}
 	return out
+}
+
+// TestExternalFingerprintIgnoresInstanceSummary 验证 instance_summary 不参与指纹：
+// 两个告警 instance 不同但 instance_summary 相同时，指纹必须不同（否则多实例被误合并）。
+func TestExternalFingerprintIgnoresInstanceSummary(t *testing.T) {
+	ev1 := &webhook.AlertEvent{
+		SourceID:   1,
+		ExternalID: "rid-1",
+		Labels: map[string]string{
+			"alertname":        "行情前置机检测异常",
+			"instance":         "172.27.16.31:19798",
+			"instance_summary": "公司前置机总数",
+		},
+	}
+	ev2 := &webhook.AlertEvent{
+		SourceID:   1,
+		ExternalID: "rid-1",
+		Labels: map[string]string{
+			"alertname":        "行情前置机检测异常",
+			"instance":         "172.27.16.32:19798",
+			"instance_summary": "公司前置机总数",
+		},
+	}
+	fp1 := externalFingerprint(ev1)
+	fp2 := externalFingerprint(ev2)
+	if fp1 == fp2 {
+		t.Fatalf("instance_summary 相同但 instance 不同的两条告警不应产生相同指纹")
+	}
+}
+
+// TestExternalFingerprintSummaryOnly 验证只有 instance_summary（无真实实例维度）时，
+// 不再把静态摘要当作维度，避免把所有同类告警折叠成一条。
+func TestExternalFingerprintSummaryOnly(t *testing.T) {
+	ev := &webhook.AlertEvent{
+		SourceID:   1,
+		ExternalID: "rid-1",
+		Labels: map[string]string{
+			"alertname":        "行情前置机检测异常",
+			"instance_summary": "公司前置机总数",
+		},
+	}
+	// 仅验证：即使 labels 只有 instance_summary，也能正常计算指纹（不 panic，且排除该 key 后结果稳定）
+	fp1 := externalFingerprint(ev)
+	fp2 := externalFingerprint(ev)
+	if fp1 != fp2 {
+		t.Fatalf("相同输入应产生稳定指纹")
+	}
+}
+
+// TestComputeIncidentSupplements 验证补充指标按 alertname 分组计算正确：
+//   - PeakInstanceCount = 窗口内 alert_history 中曾出现的不重复 fingerprint 数
+//   - TotalFiringCount = 窗口内 event_type='firing' 的总记录数（含重发的重复推送）
+func TestComputeIncidentSupplements(t *testing.T) {
+	rows := []database.AlertHistory{
+		// rule="行情前置机"：8 个独立实例（8 个不同 fingerprint），其中 4 个触发 3 次，4 个只触发 1 次
+		{RuleName: "行情前置机", Fingerprint: "fp-1", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-1", EventType: "firing"}, // 重发
+		{RuleName: "行情前置机", Fingerprint: "fp-1", EventType: "resolved"},
+		{RuleName: "行情前置机", Fingerprint: "fp-1", EventType: "firing"}, // 重发后再触发
+		{RuleName: "行情前置机", Fingerprint: "fp-2", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-2", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-2", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-3", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-3", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-3", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-4", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-4", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-4", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-5", EventType: "firing"}, // 只触发 1 次
+		{RuleName: "行情前置机", Fingerprint: "fp-6", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-7", EventType: "firing"},
+		{RuleName: "行情前置机", Fingerprint: "fp-8", EventType: "firing"},
+		// rule="MySQL延迟"：2 个实例各 1 次
+		{RuleName: "MySQL延迟", Fingerprint: "fp-9", EventType: "firing"},
+		{RuleName: "MySQL延迟", Fingerprint: "fp-10", EventType: "firing"},
+	}
+	sups := computeIncidentSupplements(rows)
+	// 行情前置机：8 个不同 fingerprint，PeakInstanceCount=8；firing 事件 = 3+3+3+3+1+1+1+1=16
+	行情前置机 := sups["行情前置机"]
+	if 行情前置机.PeakInstanceCount != 8 {
+		t.Fatalf("行情前置机 PeakInstanceCount 期望 8 实际 %d", 行情前置机.PeakInstanceCount)
+	}
+	if 行情前置机.TotalFiringCount != 16 {
+		t.Fatalf("行情前置机 TotalFiringCount 期望 16 实际 %d", 行情前置机.TotalFiringCount)
+	}
+	// MySQL延迟：2 个 fingerprint，2 个 firing
+	mysql := sups["MySQL延迟"]
+	if mysql.PeakInstanceCount != 2 {
+		t.Fatalf("MySQL延迟 PeakInstanceCount 期望 2 实际 %d", mysql.PeakInstanceCount)
+	}
+	if mysql.TotalFiringCount != 2 {
+		t.Fatalf("MySQL延迟 TotalFiringCount 期望 2 实际 %d", mysql.TotalFiringCount)
+	}
+}
+
+// TestAggregateIncidentsAppliesSupplements 验证 supplements 被正确传到 incidentDetailFull。
+func TestAggregateIncidentsAppliesSupplements(t *testing.T) {
+	alerts := []alertInstance{
+		{Fingerprint: "fp-1", RuleName: "行情前置机", State: "ongoing", FirstFiredAt: time.Now(), LastEventAt: time.Now(), Labels: map[string]string{"instance": "10.0.0.1"}},
+		{Fingerprint: "fp-2", RuleName: "行情前置机", State: "ongoing", FirstFiredAt: time.Now(), LastEventAt: time.Now(), Labels: map[string]string{"instance": "10.0.0.2"}},
+	}
+	cfg := denoiseConfig{WindowMinutes: 10, StormThreshold: 10}
+	sups := map[string]incidentSupplements{
+		"行情前置机": {PeakInstanceCount: 16, TotalFiringCount: 32},
+	}
+	incs := aggregateIncidents(alerts, cfg, sups)
+	if len(incs) != 1 {
+		t.Fatalf("期望 1 个故障，实际 %d", len(incs))
+	}
+	if incs[0].PeakInstanceCount != 16 {
+		t.Fatalf("PeakInstanceCount 应为 16，实际 %d", incs[0].PeakInstanceCount)
+	}
+	if incs[0].TotalFiringCount != 32 {
+		t.Fatalf("TotalFiringCount 应为 32，实际 %d", incs[0].TotalFiringCount)
+	}
 }

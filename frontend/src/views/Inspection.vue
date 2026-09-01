@@ -19,11 +19,37 @@
               <el-input v-model="form.datasource_url" placeholder="留空则使用默认或选择的数据源" :disabled="!!form.datasource_id" />
             </el-form-item>
 
-            <!-- Metric selector -->
-            <el-form-item label="巡检指标">
+            <!-- Inspection scope selector -->
+            <el-form-item label="巡检范围">
+              <div style="width: 100%;">
+                <el-radio-group v-model="scopeMode">
+                  <el-radio-button value="all">全部</el-radio-button>
+                  <el-radio-button value="template">按模版</el-radio-button>
+                  <el-radio-button value="type">按分组</el-radio-button>
+                  <el-radio-button value="config">按指标</el-radio-button>
+                </el-radio-group>
+                <div style="color: var(--text-tertiary); font-size: 12px; line-height: 1.4; margin-top: 6px;">
+                  「全部」巡检数据源绑定的模版/全部有效指标；后三项为互斥的精确范围（模版 > 分组 > 指标）
+                </div>
+              </div>
+            </el-form-item>
+
+            <el-form-item v-if="scopeMode === 'template'" label="巡检模版">
+              <el-select v-model="selectedTemplateIds" multiple filterable collapse-tags placeholder="选择一个或多个模版（指标合并）" style="width: 100%;">
+                <el-option v-for="t in templates" :key="t.id" :label="t.name" :value="t.id" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item v-if="scopeMode === 'type'" label="指标分组">
+              <el-select v-model="selectedTypeIds" multiple filterable collapse-tags placeholder="选择指标分组" style="width: 100%;">
+                <el-option v-for="mt in metricTypes" :key="mt.id" :label="`${mt.type_name} (${mt.configs?.length || 0})`" :value="mt.id!" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item v-if="scopeMode === 'config'" label="具体指标">
               <div style="width: 100%;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                  <span style="color: var(--text-tertiary); font-size: 13px;">选择要巡检的指标（不选则全部）</span>
+                  <span style="color: var(--text-tertiary); font-size: 13px;">勾选要巡检的具体指标</span>
                   <div>
                     <el-button size="small" text @click="selectAllMetrics" style="color: var(--cyan);">全选</el-button>
                     <el-button size="small" text @click="deselectAllMetrics" style="color: var(--text-tertiary);">清空</el-button>
@@ -32,27 +58,17 @@
                 <div v-loading="metricsLoading" style="border: 1px solid var(--border); border-radius: 10px; padding: 12px; max-height: 300px; overflow-y: auto;">
                   <template v-for="mt in metricTypes" :key="mt.id">
                     <div style="margin-bottom: 8px;">
-                      <el-checkbox
-                        v-model="selectedTypeIds"
-                        :label="mt.id"
-                        :indeterminate="isIndeterminate(mt)"
-                        @change="(val: any) => toggleType(mt, val)"
-                        style="font-weight: 600; color: var(--text-primary);"
-                      >
-                        {{ mt.type_name }} ({{ mt.configs?.length || 0 }})
-                      </el-checkbox>
-                      <div style="padding-left: 28px; margin-top: 4px;">
-                        <el-checkbox-group v-model="selectedConfigIds">
-                          <el-checkbox
-                            v-for="cfg in mt.configs || []"
-                            :key="cfg.id"
-                            :label="cfg.id"
-                            style="margin-right: 12px; margin-bottom: 4px;"
-                          >
-                            <span style="font-size: 13px;">{{ cfg.name }}</span>
-                          </el-checkbox>
-                        </el-checkbox-group>
-                      </div>
+                      <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">{{ mt.type_name }} ({{ mt.configs?.length || 0 }})</div>
+                      <el-checkbox-group v-model="selectedConfigIds">
+                        <el-checkbox
+                          v-for="cfg in mt.configs || []"
+                          :key="cfg.id"
+                          :label="cfg.id"
+                          style="margin-right: 12px; margin-bottom: 4px;"
+                        >
+                          <span style="font-size: 13px;">{{ cfg.name }}</span>
+                        </el-checkbox>
+                      </el-checkbox-group>
                     </div>
                   </template>
                   <el-empty v-if="!metricsLoading && metricTypes.length === 0" description="暂无指标配置" :image-size="40" />
@@ -110,10 +126,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getAllDataSources, getMetricTypes, triggerInspect, getInspectTask } from '../api'
+import { getAllDataSources, getMetricTypes, getAllTemplates, triggerInspect, getInspectTask } from '../api'
 import type { DataSource, MetricType } from '../types'
 
 function getCssVar(name: string): string {
@@ -125,26 +141,14 @@ const inspecting = ref(false)
 const metricsLoading = ref(false)
 const datasources = ref<DataSource[]>([])
 const metricTypes = ref<MetricType[]>([])
+const templates = ref<any[]>([])
+// 巡检范围：all=全部 / template=按模版 / type=按分组 / config=按具体指标
+const scopeMode = ref<'all' | 'template' | 'type' | 'config'>('all')
+const selectedTemplateIds = ref<number[]>([])
 const selectedTypeIds = ref<number[]>([])
 const selectedConfigIds = ref<number[]>([])
 const form = ref({ datasource_id: undefined as number | undefined, datasource_url: '', wechat_bot_key: '', touser: '' })
 const lastResult = ref<{ success: boolean; report?: string; url?: string; error?: string } | null>(null)
-
-function isIndeterminate(mt: MetricType) {
-  if (!mt.configs?.length) return false
-  const cfgIds = mt.configs.map(c => c.id!)
-  const selected = cfgIds.filter(id => selectedConfigIds.value.includes(id))
-  return selected.length > 0 && selected.length < cfgIds.length
-}
-
-function toggleType(mt: MetricType, checked: boolean) {
-  const cfgIds = mt.configs?.map(c => c.id!) || []
-  if (checked) {
-    cfgIds.forEach(id => { if (!selectedConfigIds.value.includes(id)) selectedConfigIds.value.push(id) })
-  } else {
-    selectedConfigIds.value = selectedConfigIds.value.filter(id => !cfgIds.includes(id))
-  }
-}
 
 function selectAllMetrics() {
   selectedConfigIds.value = []
@@ -171,7 +175,6 @@ async function loadMetricsForDS(dsId: number) {
       ...mt,
       configs: (mt.configs || []).filter(c => c.datasource_id === null || c.datasource_id === dsId),
     })).filter(mt => mt.configs && mt.configs.length > 0)
-    selectAllMetrics()
   } catch { /* ignore */ }
   finally { metricsLoading.value = false }
 }
@@ -179,13 +182,17 @@ async function loadMetricsForDS(dsId: number) {
 async function handleInspect() {
   inspecting.value = true; lastResult.value = null
   try {
-    const res = await triggerInspect({
+    // 按范围模式组装请求：all 不传范围，其余三选一（互斥）
+    const req: any = {
       datasource_id: form.value.datasource_id,
       datasource_url: form.value.datasource_url || undefined,
       wechat_bot_key: form.value.wechat_bot_key || undefined,
       touser: form.value.touser || undefined,
-      metric_config_ids: selectedConfigIds.value.length > 0 ? selectedConfigIds.value : undefined,
-    })
+    }
+    if (scopeMode.value === 'template') req.template_ids = selectedTemplateIds.value
+    else if (scopeMode.value === 'type') req.metric_type_ids = selectedTypeIds.value
+    else if (scopeMode.value === 'config') req.metric_config_ids = selectedConfigIds.value
+    const res = await triggerInspect(req)
     const taskId = res.data.task_id
     if (!taskId) { ElMessage.error('巡检启动失败'); inspecting.value = false; return }
 
@@ -217,8 +224,9 @@ async function handleInspect() {
 
 onMounted(async () => {
   try {
-    const dsRes = await getAllDataSources()
+    const [dsRes, tplRes] = await Promise.all([getAllDataSources(), getAllTemplates()])
     datasources.value = dsRes.data
+    templates.value = tplRes.data || []
     // 从路由参数预填数据源
     if (route.query.datasource_id) {
       const dsId = Number(route.query.datasource_id)
@@ -231,7 +239,6 @@ onMounted(async () => {
         ...mt,
         configs: (mt.configs || []).filter(c => c.datasource_id === null),
       })).filter(mt => mt.configs && mt.configs.length > 0)
-      selectAllMetrics()
     }
   } catch { /* ignore */ }
 })

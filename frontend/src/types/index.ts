@@ -74,7 +74,8 @@ export interface CronJob {
   all_datasources?: boolean
   enabled?: boolean
   notify_channels?: string
-  // 巡检指标范围（按指标分组或具体指标指定；为空表示全部有效指标）
+  // 巡检指标范围（按巡检模版/指标分组/具体指标指定；为空表示全部有效指标）
+  template_ids?: string
   metric_type_ids?: string
   metric_config_ids?: string
   // 大集群分批巡检：每批并发数据源数，0 表示不限
@@ -178,5 +179,7 @@ export interface InspectRequest {
   datasource_url?: string
   wechat_bot_key?: string
   touser?: string
+  template_ids?: number[]
   metric_config_ids?: number[]
+  metric_type_ids?: number[]
 }

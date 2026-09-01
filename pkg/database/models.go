@@ -162,7 +162,8 @@ type CronJob struct {
 	AllDatasources bool   `json:"all_datasources"`                 // 全部数据源
 	Enabled        bool   `gorm:"default:true" json:"enabled"`
 	NotifyChannels string `gorm:"type:text" json:"notify_channels"`
-	// 巡检指标范围：按指标分组(MetricType)或具体指标(MetricConfig)指定；均为空表示巡检该数据源的全部有效指标
+	// 巡检指标范围：按巡检模版(Template)/指标分组(MetricType)/具体指标(MetricConfig)指定；均为空表示巡检该数据源的全部有效指标
+	TemplateIDs     string `gorm:"type:text" json:"template_ids"`       // 巡检模版 ID JSON 数组，如 [1,2]（优先级最高）
 	MetricTypeIDs   string `gorm:"type:text" json:"metric_type_ids"`   // 指标分组 ID JSON 数组，如 [1,2]
 	MetricConfigIDs string `gorm:"type:text" json:"metric_config_ids"` // 具体指标 ID JSON 数组，如 [3,4]
 	// 大集群分批巡检：每批并发巡检的数据源数量，0 表示不限（一次全量并发）

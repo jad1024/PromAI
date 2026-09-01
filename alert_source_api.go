@@ -331,12 +331,21 @@ func resolveExternalAlert(ctx context.Context, ev *webhook.AlertEvent, source *d
 	return nil
 }
 
+// fingerprintExcludedLabels 参与指纹计算时需排除的非维度标签（双保险）：
+// instance_summary 等兜底摘要不应影响实例维度聚合，否则会把不同实例误合并成同一条故障。
+var fingerprintExcludedLabels = map[string]struct{}{
+	"instance_summary": {},
+}
+
 // externalFingerprint 外部告警指纹：源ID + 平台规则ID + 标签哈希
 func externalFingerprint(ev *webhook.AlertEvent) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "src=%d|rid=%s|", ev.SourceID, ev.ExternalID)
 	keys := make([]string, 0, len(ev.Labels))
 	for k := range ev.Labels {
+		if _, excluded := fingerprintExcludedLabels[k]; excluded {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)

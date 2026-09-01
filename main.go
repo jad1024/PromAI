@@ -1560,28 +1560,19 @@ func resolveJobDatasourceIDs(job database.CronJob) []uint {
 // loadJobMetricConfigs 解析定时任务指定的巡检指标范围，返回 nil 表示巡检全部有效指标。
 // 优先级：MetricConfigIDs（具体指标）> MetricTypeIDs（指标分组）> 全部。
 func loadJobMetricConfigs(job database.CronJob) []database.MetricConfig {
-	var configs []database.MetricConfig
-
-	// 1) 指定了具体指标 ID
+	// 解析巡检范围：模版(TemplateIDs) > 具体指标(MetricConfigIDs) > 指标分组(MetricTypeIDs)
+	var templateIDs, metricConfigIDs, metricTypeIDs []uint
+	if job.TemplateIDs != "" {
+		_ = json.Unmarshal([]byte(job.TemplateIDs), &templateIDs)
+	}
 	if job.MetricConfigIDs != "" {
-		var ids []uint
-		if err := json.Unmarshal([]byte(job.MetricConfigIDs), &ids); err == nil && len(ids) > 0 {
-			database.DB.Where("id IN ?", ids).Order("metric_type_id asc, sort_order asc, id asc").Find(&configs)
-			return configs
-		}
+		_ = json.Unmarshal([]byte(job.MetricConfigIDs), &metricConfigIDs)
 	}
-
-	// 2) 指定了指标分组 ID
 	if job.MetricTypeIDs != "" {
-		var ids []uint
-		if err := json.Unmarshal([]byte(job.MetricTypeIDs), &ids); err == nil && len(ids) > 0 {
-			database.DB.Where("metric_type_id IN ?", ids).Order("metric_type_id asc, sort_order asc, id asc").Find(&configs)
-			return configs
-		}
+		_ = json.Unmarshal([]byte(job.MetricTypeIDs), &metricTypeIDs)
 	}
-
-	// 3) 未指定：返回 nil，交由 buildRuntimeMetricConfig 按数据源加载全部有效指标
-	return nil
+	// 统一走 resolveScopedMetricConfigs（与手动巡检、AI 对话语义对齐）；返回 nil 表示巡检全部有效指标
+	return resolveScopedMetricConfigs(templateIDs, metricConfigIDs, metricTypeIDs)
 }
 
 // saveReportRecord 保存报告记录到数据库

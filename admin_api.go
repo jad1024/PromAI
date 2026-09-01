@@ -1869,6 +1869,8 @@ func (a *AdminAPI) handleInspect(w http.ResponseWriter, r *http.Request) {
 		DatasourceURL   string `json:"datasource_url"`
 		WechatBotKey    string `json:"wechat_bot_key"`
 		ToUser          string `json:"touser"`
+		TemplateIDs     []uint `json:"template_ids"`
+		MetricTypeIDs   []uint `json:"metric_type_ids"`
 		MetricConfigIDs []uint `json:"metric_config_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1929,6 +1931,8 @@ func (a *AdminAPI) runInspect(task *InspectTask, promURL, promUser, promPass str
 	DatasourceURL   string `json:"datasource_url"`
 	WechatBotKey    string `json:"wechat_bot_key"`
 	ToUser          string `json:"touser"`
+	TemplateIDs     []uint `json:"template_ids"`
+	MetricTypeIDs   []uint `json:"metric_type_ids"`
 	MetricConfigIDs []uint `json:"metric_config_ids"`
 }) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -1974,12 +1978,9 @@ func (a *AdminAPI) runInspect(task *InspectTask, promURL, promUser, promPass str
 		}
 
 		activeConfig := a.config
-		if len(req.MetricConfigIDs) > 0 {
-			var selectedConfigs []database.MetricConfig
-			database.DB.Where("id IN ?", req.MetricConfigIDs).Find(&selectedConfigs)
-			if len(selectedConfigs) > 0 {
-				activeConfig = buildRuntimeMetricConfig(activeConfig, runtimeDS, selectedConfigs)
-			}
+		selectedConfigs := resolveScopedMetricConfigs(req.TemplateIDs, req.MetricConfigIDs, req.MetricTypeIDs)
+		if len(selectedConfigs) > 0 {
+			activeConfig = buildRuntimeMetricConfig(activeConfig, runtimeDS, selectedConfigs)
 		} else if runtimeDS != nil {
 			activeConfig = buildRuntimeMetricConfig(activeConfig, runtimeDS, nil)
 		}
@@ -2102,6 +2103,8 @@ func (a *AdminAPI) runSingleInspect(ds database.DataSource) {
 		DatasourceURL   string `json:"datasource_url"`
 		WechatBotKey    string `json:"wechat_bot_key"`
 		ToUser          string `json:"touser"`
+		TemplateIDs     []uint `json:"template_ids"`
+		MetricTypeIDs   []uint `json:"metric_type_ids"`
 		MetricConfigIDs []uint `json:"metric_config_ids"`
 	}{DatasourceID: ds.ID}
 	a.runInspect(task, ds.URL, ds.Username, ds.Password, req)
