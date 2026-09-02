@@ -128,6 +128,12 @@
           <el-switch v-model="form.ai_analysis_enabled" active-text="开启（巡检后 AI 分析并推送飞书）" inactive-text="关闭" />
           <div style="color: var(--text-tertiary); font-size: 12px; line-height: 1.4;">定时触发时需开启此开关才会推送飞书 AI 分析；列表页手动「AI 分析」不受此开关限制</div>
         </el-form-item>
+        <el-form-item v-if="form.ai_analysis_enabled" label="关联告警源">
+          <el-select v-model="selectedAlertSourceIds" placeholder="AI 分析时纳入的告警源（留空=全部）" multiple clearable filterable collapse-tags style="width: 100%;">
+            <el-option v-for="s in alertSources" :key="s.id" :label="`${s.name} (${s.type})`" :value="s.id!" />
+          </el-select>
+          <div style="color: var(--text-tertiary); font-size: 12px; line-height: 1.4; margin-top: 4px;">按平台隔离 AI 分析的告警上下文：华为云巡检选 SMN 源、期货巡检选 n9e 源；留空则沿用全部告警。任务级配置优先于模版级配置。</div>
+        </el-form-item>
         <el-form-item v-if="form.ai_analysis_enabled" label="自定义提示词">
           <el-input v-model="form.ai_analysis_prompt" type="textarea" :rows="3" placeholder="可选。留空使用内置模板（健康总览 / 异常分析 / 处理建议 / 风险提示）" />
         </el-form-item>
@@ -154,8 +160,9 @@ import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { getCronJobs, createCronJob, updateCronJob, deleteCronJob, triggerCronJobAIAnalyze, getAllDataSources, getAllNotifications, getMetricTypes, getAllTemplates } from '../api'
+import { getCronJobs, createCronJob, updateCronJob, deleteCronJob, triggerCronJobAIAnalyze, getAllDataSources, getAllNotifications, getMetricTypes, getAllTemplates, getAlertSources } from '../api'
 import type { CronJob, DataSource, NotificationChannel, MetricType } from '../types'
+import type { ExternalAlertSource } from '../types/alerting'
 
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -176,6 +183,9 @@ const selectedMetricTypeIds = ref<number[]>([])
 const selectedMetricConfigIds = ref<number[]>([])
 const selectedTemplateIds = ref<number[]>([])
 const templates = ref<any[]>([])
+// 关联告警源（AI 巡检分析按平台隔离告警上下文）
+const alertSources = ref<ExternalAlertSource[]>([])
+const selectedAlertSourceIds = ref<number[]>([])
 // 巡检范围：all=全部 / template=按模版 / type=按分组 / config=按具体指标
 const scopeMode = ref<'all' | 'template' | 'type' | 'config'>('all')
 const aiAnalyzingId = ref<number | null>(null)
@@ -263,22 +273,29 @@ watch(selectedTemplateIds, (ids) => {
   form.value.template_ids = ids.length > 0 ? JSON.stringify(ids) : ''
 })
 
+// Sync form.alert_source_ids with selectedAlertSourceIds
+watch(selectedAlertSourceIds, (ids) => {
+  form.value.alert_source_ids = ids.length > 0 ? JSON.stringify(ids) : ''
+})
+
 async function fetchData() {
   loading.value = true
   try {
     const [jr, dr, nr, mr, tr] = await Promise.all([getCronJobs(), getAllDataSources(), getAllNotifications(), getMetricTypes(), getAllTemplates()])
     jobs.value = jr.data; datasources.value = dr.data; notifications.value = nr.data; metricTypes.value = mr.data; templates.value = tr.data || []
+    try { alertSources.value = (await getAlertSources()).data.filter(s => s.enabled !== false) } catch { /* 忽略 */ }
   } finally { loading.value = false }
 }
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, ai_analysis_prompt: '', ai_only_abnormal: false, batch_size: 0 }
+  form.value = { name: '', schedule: '', datasource_id: null, all_datasources: false, enabled: true, ai_analysis_enabled: false, ai_analysis_prompt: '', ai_only_abnormal: false, batch_size: 0, alert_source_ids: '' }
   notifChannelIds.value = []
   selectedDSIds.value = []
   selectedMetricTypeIds.value = []
   selectedMetricConfigIds.value = []
   selectedTemplateIds.value = []
+  selectedAlertSourceIds.value = []
   scopeMode.value = 'all'
   dialogVisible.value = true
 }
@@ -290,6 +307,7 @@ function openEdit(row: CronJob) {
   try { selectedMetricTypeIds.value = row.metric_type_ids ? JSON.parse(row.metric_type_ids) : [] } catch { selectedMetricTypeIds.value = [] }
   try { selectedMetricConfigIds.value = row.metric_config_ids ? JSON.parse(row.metric_config_ids) : [] } catch { selectedMetricConfigIds.value = [] }
   try { selectedTemplateIds.value = row.template_ids ? JSON.parse(row.template_ids) : [] } catch { selectedTemplateIds.value = [] }
+  try { selectedAlertSourceIds.value = row.alert_source_ids ? JSON.parse(row.alert_source_ids) : [] } catch { selectedAlertSourceIds.value = [] }
   // 根据回填值推断当前范围模式（优先级与后端一致）
   scopeMode.value = selectedTemplateIds.value.length ? 'template'
     : selectedMetricConfigIds.value.length ? 'config'

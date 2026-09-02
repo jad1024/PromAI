@@ -172,6 +172,10 @@ type CronJob struct {
 	AiAnalysisEnabled bool       `json:"ai_analysis_enabled"`                 // 是否启用 AI 巡检分析
 	AiAnalysisPrompt  string     `gorm:"type:text" json:"ai_analysis_prompt"` // 自定义 AI 分析提示词（可选，空则使用内置模板）
 	AiOnlyAbnormal    bool       `json:"ai_only_abnormal"`                    // 仅当巡检存在异常（critical/warning）时才调用 AI 分析，正常时跳过以节省 token
+	// 关联的外部告警源 ID（JSON 数组）：AI 巡检分析时按告警源隔离上下文。
+	// 例如「华为云巡检」任务关联 SMN 告警源，「期货巡检」任务关联 n9e 告警源，
+	// 巡检华为云时 AI 分析不会把期货(n9e)告警纳入分析。为空表示不过滤（沿用全部告警）。
+	AlertSourceIDs string `gorm:"type:text" json:"alert_source_ids"`
 	LastRunAt         *time.Time `json:"last_run_at"`
 	LastStatus        string     `gorm:"size:50" json:"last_status"`
 	CreatedAt         time.Time  `json:"created_at"`

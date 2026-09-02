@@ -85,6 +85,8 @@ export interface CronJob {
   ai_analysis_prompt?: string
   // 仅当巡检存在异常时才调用 AI 分析，正常时跳过以节省 token
   ai_only_abnormal?: boolean
+  // AI 巡检分析时按告警源隔离上下文（JSON 数组字符串，如 "[1,2]"）
+  alert_source_ids?: string
   last_run_at?: string | null
   last_status?: string
   created_at?: string

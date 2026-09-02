@@ -1572,10 +1572,18 @@ func resolveJobDatasourceIDs(job database.CronJob) []uint {
 	return nil
 }
 
-// resolveJobAlertSourceIDs 从任务关联的巡检模版中解析外部告警源 ID 集合（去重）。
-// 用于 AI 巡检分析时按告警源隔离上下文：巡检「华为云」模版时不把「期货(n9e)」的告警纳入分析。
-// 返回 nil 表示任务未绑定任何带告警源过滤的模版（沿用全部告警）。
+// resolveJobAlertSourceIDs 解析 AI 巡检分析时要按告警源隔离的外部告警源 ID 集合（去重）。
+// 优先级：任务自身 alert_source_ids > 任务绑定的巡检模版 alert_source_ids 合并 > 全部。
+// 返回 nil 表示任务及模版都未配置告警源过滤（沿用全部告警）。
 func resolveJobAlertSourceIDs(job database.CronJob) []uint {
+	// 1) 任务级覆盖：job.AlertSourceIDs 非空直接生效
+	if strings.TrimSpace(job.AlertSourceIDs) != "" {
+		var ids []uint
+		if json.Unmarshal([]byte(job.AlertSourceIDs), &ids) == nil && len(ids) > 0 {
+			return dedupeUints(ids)
+		}
+	}
+	// 2) 模版级兜底：合并任务绑定模版的告警源
 	if job.TemplateIDs == "" {
 		return nil
 	}
@@ -1606,6 +1614,19 @@ func resolveJobAlertSourceIDs(job database.CronJob) []uint {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+// dedupeUints 去重并保持顺序。
+func dedupeUints(ids []uint) []uint {
+	seen := map[uint]struct{}{}
+	out := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
 	}
 	return out
 }
