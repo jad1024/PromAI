@@ -712,6 +712,20 @@ func sendInspectionNotifications(config *config.Config, job database.CronJob, re
 	}
 }
 
+// buildInspectionReportURL 生成巡检报告的完整可访问 URL（含协议 + host）。
+// 优先级：PROMAI_PUBLIC_URL 环境变量 > REPORT_URL 环境变量 > localhost:port 兜底。
+// 用于 AI 巡检分析、飞书卡片等异步场景（这些场景拿不到 http.Request，不能靠 GetReportURL 动态取 host），
+// 避免生成形如 http:///api/promai/reports/... 的残缺链接。
+func buildInspectionReportURL(reportFilePath string) string {
+	reportFileName := filepath.Base(reportFilePath)
+	// 1) 显式公网地址（最优先，适用于反向代理/域名访问）
+	if base := utils.GetGlobalPublicURL(); base != "" {
+		return strings.TrimRight(base, "/") + "/api/promai/reports/" + url.PathEscape(reportFileName)
+	}
+	// 2) 兜底：REPORT_URL 环境变量 → localhost:port
+	return utils.BuildReportURL("", reportFileName)
+}
+
 // runInspectionAIAnalysis 巡检完成后执行 AI 健康分析，并将分析结果推送到任务配置的飞书通道。
 // 仅当 job.AiAnalysisEnabled 为 true 时执行；分析结果同时持久化到 AiAnalysisRecord。
 func runInspectionAIAnalysis(job database.CronJob, reportData *report.ReportData, reportFilePath string) {
@@ -730,9 +744,10 @@ func runInspectionAIAnalysis(job database.CronJob, reportData *report.ReportData
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
+	reportURL := buildInspectionReportURL(reportFilePath)
 	refID := fmt.Sprintf("inspect_%d_%d", job.ID, time.Now().Unix())
-	res, err := piagent.DefaultAgentHandler.AnalyzeInspectionWithPrompt(ctx, reportData, reportURL, job.AiAnalysisPrompt, refID)
+	alertSourceIDs := resolveJobAlertSourceIDs(job)
+	res, err := piagent.DefaultAgentHandler.AnalyzeInspectionWithPrompt(ctx, reportData, reportURL, job.AiAnalysisPrompt, refID, alertSourceIDs)
 	if err != nil {
 		log.Printf("[PiAgent] 巡检 AI 分析失败: %v", err)
 		return
@@ -1555,6 +1570,44 @@ func resolveJobDatasourceIDs(job database.CronJob) []uint {
 		return []uint{*job.DatasourceID}
 	}
 	return nil
+}
+
+// resolveJobAlertSourceIDs 从任务关联的巡检模版中解析外部告警源 ID 集合（去重）。
+// 用于 AI 巡检分析时按告警源隔离上下文：巡检「华为云」模版时不把「期货(n9e)」的告警纳入分析。
+// 返回 nil 表示任务未绑定任何带告警源过滤的模版（沿用全部告警）。
+func resolveJobAlertSourceIDs(job database.CronJob) []uint {
+	if job.TemplateIDs == "" {
+		return nil
+	}
+	var templateIDs []uint
+	if err := json.Unmarshal([]byte(job.TemplateIDs), &templateIDs); err != nil || len(templateIDs) == 0 {
+		return nil
+	}
+	var templates []database.InspectionTemplate
+	if err := database.DB.Select("id, alert_source_ids").Where("id IN ?", templateIDs).Find(&templates).Error; err != nil {
+		return nil
+	}
+	seen := map[uint]struct{}{}
+	var out []uint
+	for _, t := range templates {
+		if strings.TrimSpace(t.AlertSourceIDs) == "" {
+			continue
+		}
+		var ids []uint
+		if json.Unmarshal([]byte(t.AlertSourceIDs), &ids) != nil {
+			continue
+		}
+		for _, id := range ids {
+			if _, ok := seen[id]; !ok {
+				seen[id] = struct{}{}
+				out = append(out, id)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // loadJobMetricConfigs 解析定时任务指定的巡检指标范围，返回 nil 表示巡检全部有效指标。

@@ -173,7 +173,7 @@ export const getTemplates = (params?: { page?: number; page_size?: number; keywo
 export const getAllTemplates = () => api.get<any[]>('/templates/all')
 export const initTemplates = () => api.post('/templates/init')
 export const getTemplate = (id: number) => api.get(`/templates/${id}`)
-export const createTemplate = (name: string, description?: string, category?: string) => api.post('/templates', { name, description, category })
+export const createTemplate = (name: string, description?: string, category?: string, alert_source_ids?: number[]) => api.post('/templates', { name, description, category, alert_source_ids: JSON.stringify(alert_source_ids || []) })
 export const updateTemplate = (id: number, t: any) => api.put(`/templates/${id}`, t)
 export const deleteTemplate = (id: number) => api.delete(`/templates/${id}`)
 export const getTemplateMetrics = (id: number) => api.get(`/templates/${id}/metrics`)

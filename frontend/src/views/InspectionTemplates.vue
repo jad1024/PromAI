@@ -86,6 +86,12 @@
         <el-form-item label="描述">
           <el-input v-model="form.description" placeholder="可选" type="textarea" :rows="2" />
         </el-form-item>
+        <el-form-item label="关联告警源">
+          <el-select v-model="form.alert_source_ids" multiple clearable filterable placeholder="选择本模版巡检时 AI 分析纳入的告警源（留空=全部）" style="width: 100%;">
+            <el-option v-for="s in alertSources" :key="s.id" :label="`${s.name} (${s.type})`" :value="s.id!" />
+          </el-select>
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">用于 AI 巡检分析按平台隔离告警：例如「华为云」模版只关联 SMN 告警源，巡检时不会把期货(n9e)告警纳入分析；留空则沿用全部告警。</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <div class="dialog-footer">
@@ -257,8 +263,9 @@ import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { getTemplates, createTemplate, updateTemplate, deleteTemplate, getTemplate, getTemplateMetrics, setTemplateMetrics, getMetricTypes, saveTemplateMetricOverride, initTemplates, getTemplateRefs } from '../api'
+import { getTemplates, createTemplate, updateTemplate, deleteTemplate, getTemplate, getTemplateMetrics, setTemplateMetrics, getMetricTypes, saveTemplateMetricOverride, initTemplates, getTemplateRefs, getAlertSources } from '../api'
 import type { MetricType } from '../types'
+import type { ExternalAlertSource } from '../types/alerting'
 
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -296,8 +303,17 @@ const metricsDialog = ref(false)
 const detailDialog = ref(false)
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
-const form = ref({ name: '', description: '', category: '' })
+const form = ref<{ name: string; description: string; category: string; alert_source_ids: number[] }>({ name: '', description: '', category: '', alert_source_ids: [] })
 const rules = { name: [{ required: true, message: '请输入模板名称', trigger: 'blur' }] }
+
+// 外部告警源列表（用于「关联告警源」多选，按平台隔离 AI 巡检分析的告警上下文）
+const alertSources = ref<ExternalAlertSource[]>([])
+async function loadAlertSources() {
+  try {
+    const res = await getAlertSources()
+    alertSources.value = (res.data || []).filter(s => s.enabled !== false)
+  } catch { /* 忽略，告警源加载失败不影响模板编辑 */ }
+}
 
 // Detail view state
 const detailTemplate = ref<any>(null)
@@ -318,8 +334,9 @@ async function fetchData() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', description: '', category: '' }
+  form.value = { name: '', description: '', category: '', alert_source_ids: [] }
   createDialog.value = true
+  loadAlertSources()
 }
 
 async function handleSave() {
@@ -328,10 +345,15 @@ async function handleSave() {
   saving.value = true
   try {
     if (editingId.value) {
-      await updateTemplate(editingId.value, form.value)
+      await updateTemplate(editingId.value, {
+        name: form.value.name,
+        description: form.value.description,
+        category: form.value.category,
+        alert_source_ids: JSON.stringify(form.value.alert_source_ids || []),
+      })
       ElMessage.success('更新成功')
     } else {
-      await createTemplate(form.value.name, form.value.description, form.value.category)
+      await createTemplate(form.value.name, form.value.description, form.value.category, form.value.alert_source_ids)
       ElMessage.success('创建成功')
     }
     createDialog.value = false
@@ -355,8 +377,11 @@ async function handleInitTemplates() {
 
 function openEdit(row: any) {
   editingId.value = row.id
-  form.value = { name: row.name, description: row.description || '', category: row.category || '' }
+  let ids: number[] = []
+  try { ids = JSON.parse(row.alert_source_ids || '[]') } catch { ids = [] }
+  form.value = { name: row.name, description: row.description || '', category: row.category || '', alert_source_ids: ids }
   createDialog.value = true
+  loadAlertSources()
 }
 
 async function handleDelete(row: any) {

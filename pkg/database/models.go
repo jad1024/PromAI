@@ -207,8 +207,12 @@ type InspectionTemplate struct {
 	Name        string    `gorm:"size:200;not null" json:"name"`
 	Description string    `gorm:"size:500" json:"description"`
 	Category    string    `gorm:"size:100;index" json:"category"` // 模板族分类，如 基础设施 / 数据库 / 中间件 / 自定义
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// 关联的外部告警源 ID（JSON 数组）：用于 AI 巡检分析时按告警源隔离上下文。
+	// 例如「华为云巡检」模版关联 SMN 告警源，「期货平台巡检」模版关联 n9e 告警源，
+	// 巡检华为云时 AI 分析就不会把期货(n9e)的告警也纳入分析。为空表示不过滤（沿用全部告警）。
+	AlertSourceIDs string `gorm:"type:text" json:"alert_source_ids"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type InspectionTemplateMetric struct {

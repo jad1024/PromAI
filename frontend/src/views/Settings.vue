@@ -64,6 +64,21 @@
     </div>
 
     <div class="form-section">
+      <h3><el-icon :size="16" :color="getCssVar('--cyan')"><Aim /></el-icon> 敏感端口检测</h3>
+      <p class="section-desc">配置敏感端口扫描任务的探测参数（对所有扫描任务生效）</p>
+      <el-form :model="form" label-width="160px" style="max-width: 600px;">
+        <el-form-item label="单连接超时（秒）">
+          <el-input-number v-model="portScanTimeout" :min="1" :max="60" style="width: 100%;" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">单个 IP:端口 的 TCP 连接超时，默认 2 秒（被过滤的端口通常表现为超时）</div>
+        </el-form-item>
+        <el-form-item label="并发连接数">
+          <el-input-number v-model="portScanConcurrency" :min="1" :max="1000" style="width: 100%;" />
+          <div style="color: var(--text-tertiary); font-size: 12px; margin-top: 6px;">同时发起的 TCP 连接数，默认 100（过大可能触发防火墙限速）</div>
+        </el-form-item>
+      </el-form>
+    </div>
+
+    <div class="form-section">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><Brush /></el-icon> 主题设置</h3>
       <div class="theme-grid">
         <div
@@ -305,6 +320,7 @@ const form = ref<Record<string, string>>({
   ai_enabled: 'false', ai_default_model: '',
   platform_name: 'PromAI', platform_subtitle: '运维监控平台',
   report_signature: '由 PromAI AI 巡检自动生成',
+  portscan_timeout_seconds: '2', portscan_concurrency: '100',
 })
 const modelList = ref<AIModelForm[]>([])
 
@@ -319,6 +335,14 @@ const reportCleanupMaxAge = computed({
 const alertHistoryRetentionDays = computed({
   get: () => parseInt(form.value.alert_history_retention_days || '30'),
   set: (v: number) => { form.value.alert_history_retention_days = String(v) },
+})
+const portScanTimeout = computed({
+  get: () => parseInt(form.value.portscan_timeout_seconds || '2'),
+  set: (v: number) => { form.value.portscan_timeout_seconds = String(v) },
+})
+const portScanConcurrency = computed({
+  get: () => parseInt(form.value.portscan_concurrency || '100'),
+  set: (v: number) => { form.value.portscan_concurrency = String(v) },
 })
 const aiEnabled = computed({
   get: () => form.value.ai_enabled === 'true',
@@ -402,6 +426,8 @@ async function handleSave() {
       platform_name: form.value.platform_name,
       platform_subtitle: form.value.platform_subtitle,
       report_signature: form.value.report_signature,
+      portscan_timeout_seconds: form.value.portscan_timeout_seconds,
+      portscan_concurrency: form.value.portscan_concurrency,
     }
     payload.ai_models = JSON.stringify(modelList.value)
     await updateSettings(payload)

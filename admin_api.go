@@ -2316,15 +2316,16 @@ func (a *AdminAPI) handleTemplates(w http.ResponseWriter, r *http.Request) {
 		})
 	case "POST":
 		var req struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Category    string `json:"category"`
+			Name           string `json:"name"`
+			Description    string `json:"description"`
+			Category       string `json:"category"`
+			AlertSourceIDs string `json:"alert_source_ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 			writeError(w, 400, "请提供模板名称")
 			return
 		}
-		t := database.InspectionTemplate{Name: req.Name, Description: req.Description, Category: req.Category}
+		t := database.InspectionTemplate{Name: req.Name, Description: req.Description, Category: req.Category, AlertSourceIDs: req.AlertSourceIDs}
 		database.DB.Create(&t)
 		w.WriteHeader(201)
 		writeJSON(w, t)

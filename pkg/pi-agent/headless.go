@@ -128,15 +128,16 @@ func (h *AgentHandler) RunHeadless(ctx context.Context, prompt string, timeout t
 // AnalyzeInspectionResult 对一次巡检结果做 AI 健康分析。
 // 适用于定时巡检完成后生成分析结论（可推送到飞书等渠道）。
 func (h *AgentHandler) AnalyzeInspectionResult(ctx context.Context, data *report.ReportData, reportURL string) (*HeadlessResult, error) {
-	prompt := buildInspectionAnalysisPrompt(data, reportURL)
+	prompt := buildInspectionAnalysisPrompt(data, reportURL, nil)
 	return h.RunHeadless(ctx, prompt, 0)
 }
 
 // AnalyzeInspectionWithPrompt 使用自定义提示词执行巡检分析并持久化记录。
 // prompt 为空时回退到内置模板；适用于定时任务配置了 ai_analysis_prompt 的场景。
-func (h *AgentHandler) AnalyzeInspectionWithPrompt(ctx context.Context, data *report.ReportData, reportURL, prompt, refID string) (*HeadlessResult, error) {
+// alertSourceIDs 非空时，巡检分析的告警上下文只保留这些外部告警源的实例（按平台/告警源隔离）。
+func (h *AgentHandler) AnalyzeInspectionWithPrompt(ctx context.Context, data *report.ReportData, reportURL, prompt, refID string, alertSourceIDs []uint) (*HeadlessResult, error) {
 	if strings.TrimSpace(prompt) == "" {
-		prompt = buildInspectionAnalysisPrompt(data, reportURL)
+		prompt = buildInspectionAnalysisPrompt(data, reportURL, alertSourceIDs)
 	}
 	res, err := h.RunHeadless(ctx, prompt, 0)
 	if h.db != nil {
@@ -422,7 +423,7 @@ func (h *AgentHandler) AnalyzeAlertAndRecord(ctx context.Context, rule *database
 
 // AnalyzeInspectionAndRecord 分析巡检结果并持久化分析记录（AiAnalysisRecord）。
 func (h *AgentHandler) AnalyzeInspectionAndRecord(ctx context.Context, data *report.ReportData, reportURL, refID string) (*HeadlessResult, error) {
-	return h.AnalyzeInspectionWithPrompt(ctx, data, reportURL, "", refID)
+	return h.AnalyzeInspectionWithPrompt(ctx, data, reportURL, "", refID, nil)
 }
 
 // AnalyzeExternalAlertAndRecord 对外部平台（n9e/华为云）告警做根因分析并落库。
@@ -493,7 +494,7 @@ func buildExternalAlertPrompt(sourceName string, ev *webhook.AlertEvent) string 
 }
 
 // buildInspectionAnalysisPrompt 构造巡检分析 Prompt
-func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string) string {
+func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string, alertSourceIDs []uint) string {
 	var b strings.Builder
 	b.WriteString("你是 PromAI 的资深运维监控专家。请基于下面的巡检结果做一次健康分析。\n\n")
 	b.WriteString("## 巡检概览\n")
@@ -519,7 +520,7 @@ func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string) st
 
 	// 当前活跃告警（本地告警 + 外部告警源汇入的实例），便于 AI 结合告警综合判断
 	b.WriteString("\n## 当前活跃告警\n")
-	if alerts := collectActiveAlerts(15); len(alerts) > 0 {
+	if alerts := collectActiveAlerts(15, alertSourceIDs); len(alerts) > 0 {
 		b.WriteString(fmt.Sprintf("共 %d 条活跃告警（按触发时间倒序）：\n", len(alerts)))
 		b.WriteString(strings.Join(alerts, "\n"))
 		b.WriteString("\n（告警为实时查询结果，可能与本次巡检时间点存在秒级偏差）")
@@ -529,7 +530,7 @@ func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string) st
 
 	// 事件聚合降噪结论（按 alertname 聚合故障，标注风暴），让 AI 用降噪后结论而非逐条平铺
 	b.WriteString("\n## 事件聚合降噪\n")
-	if incidents := collectIncidentSummary(8); len(incidents) > 0 {
+	if incidents := collectIncidentSummary(8, alertSourceIDs); len(incidents) > 0 {
 		b.WriteString(strings.Join(incidents, "\n"))
 	} else {
 		b.WriteString("当前无活跃故障。\n")
@@ -553,18 +554,23 @@ func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string) st
 
 // collectActiveAlerts 收集当前活跃告警（firing/pending），供巡检 AI 分析作为上下文。
 // 覆盖本地告警与外部告警源（n9e/华为云）汇入的实例。
+// alertSourceIDs 非空时，仅保留 external_source_id 属于该集合的实例（用于按平台/告警源隔离上下文）；
+// 为空表示不过滤（沿用全部告警）。
 // 每条告警输出完整信息：名称/级别/来源/状态/持续时长/当前值/阈值/标签/注解，
 // 避免只传 alertname 导致 AI 分析缺乏上下文。
-func collectActiveAlerts(max int) []string {
+func collectActiveAlerts(max int, alertSourceIDs []uint) []string {
 	if max <= 0 {
 		max = 15
 	}
 	if database.DB == nil {
 		return nil
 	}
+	q := database.DB.Where("state IN ?", []string{"firing", "pending"})
+	if len(alertSourceIDs) > 0 {
+		q = q.Where("external_source_id IN ?", alertSourceIDs)
+	}
 	var insts []database.AlertInstance
-	if err := database.DB.Where("state IN ?", []string{"firing", "pending"}).
-		Order("active_at desc").Limit(max).Find(&insts).Error; err != nil {
+	if err := q.Order("active_at desc").Limit(max).Find(&insts).Error; err != nil {
 		log.Printf("[PiAgent] 查询活跃告警失败: %v", err)
 		return nil
 	}
@@ -666,7 +672,8 @@ func truncateValue(s string, maxLen int) string {
 // collectIncidentSummary 基于事件聚合模型汇总当前活跃告警的降噪结论。
 // 按 alertname 聚合（与事件聚合页一致），输出故障数、各故障涉及的实例/集群数、
 // 是否告警风暴，供巡检 AI 分析用降噪后的结构化结论而非平铺实例。
-func collectIncidentSummary(max int) []string {
+// alertSourceIDs 非空时仅保留 external_source_id 属于该集合的实例（按平台/告警源隔离）。
+func collectIncidentSummary(max int, alertSourceIDs []uint) []string {
 	if database.DB == nil {
 		return nil
 	}
@@ -689,9 +696,12 @@ func collectIncidentSummary(max int) []string {
 		}
 	}
 
+	q := database.DB.Where("state IN ?", []string{"firing", "pending"})
+	if len(alertSourceIDs) > 0 {
+		q = q.Where("external_source_id IN ?", alertSourceIDs)
+	}
 	var insts []database.AlertInstance
-	if err := database.DB.Where("state IN ?", []string{"firing", "pending"}).
-		Order("active_at desc").Limit(500).Find(&insts).Error; err != nil || len(insts) == 0 {
+	if err := q.Order("active_at desc").Limit(500).Find(&insts).Error; err != nil || len(insts) == 0 {
 		return nil
 	}
 

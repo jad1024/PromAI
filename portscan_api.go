@@ -86,9 +86,35 @@ func (a *AdminAPI) handlePortScanCreate(w http.ResponseWriter, r *http.Request) 
 	go a.runPortScan(taskID, targets, ports)
 }
 
+// portScanTimeout 从系统设置读取单连接探测超时（秒），默认 2s。
+func portScanTimeout() time.Duration {
+	v := strings.TrimSpace(database.GetAppSetting("portscan_timeout_seconds"))
+	if v == "" {
+		return 2 * time.Second
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 60 {
+		return time.Duration(n) * time.Second
+	}
+	return 2 * time.Second
+}
+
+// portScanConcurrency 从系统设置读取并发连接数，默认 100。
+func portScanConcurrency() int {
+	v := strings.TrimSpace(database.GetAppSetting("portscan_concurrency"))
+	if v == "" {
+		return 100
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
+		return n
+	}
+	return 100
+}
+
 // runPortScan 执行扫描并落库结果。
 func (a *AdminAPI) runPortScan(taskID string, targets []string, ports []int) {
-	results := portscan.Scan(targets, ports, portscan.Options{Timeout: 2 * time.Second, Concurrency: 100})
+	opts := portscan.Options{Timeout: portScanTimeout(), Concurrency: portScanConcurrency()}
+	log.Printf("[PortScan] 扫描参数 task_id=%s timeout=%v concurrency=%d", taskID, opts.Timeout, opts.Concurrency)
+	results := portscan.Scan(targets, ports, opts)
 
 	openCount := 0
 	for _, res := range results {
