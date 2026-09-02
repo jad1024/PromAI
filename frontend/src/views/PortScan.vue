@@ -110,37 +110,64 @@
       </div>
     </div>
 
-    <el-drawer v-model="drawerVisible" size="60%" :title="`扫描结果 - ${currentTask?.task_id || ''}`">
+    <el-drawer v-model="drawerVisible" size="70%" :title="`扫描结果 - ${currentTask?.task_id || ''}`">
       <div v-if="currentTask" class="drawer-head">
         <span>目标 {{ currentTask.total_targets }} 个 · 端口 {{ currentTask.total_ports }} 个 · 开放敏感端口 <b :style="{ color: currentTask.open_ports > 0 ? 'var(--red)' : 'var(--emerald)' }">{{ currentTask.open_ports }}</b> 个</span>
         <el-button size="small" type="primary" @click="downloadReport(currentTask)">
           <el-icon><Download /></el-icon> 导出报告
         </el-button>
       </div>
-      <el-table :data="results" v-loading="resultsLoading" stripe size="small">
-        <el-table-column prop="ip" label="IP" width="150" />
-        <el-table-column prop="port" label="端口" width="80" align="center" />
-        <el-table-column prop="port_name" label="服务" min-width="120" />
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag v-if="row.state === 'open'" type="success" effect="dark">开放</el-tag>
-            <el-tag v-else-if="row.state === 'timeout'" type="info">超时</el-tag>
-            <el-tag v-else-if="row.state === 'refused'" type="info">拒绝</el-tag>
-            <el-tag v-else type="info">关闭</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="风险" width="90">
-          <template #default="{ row }">
-            <el-tag v-if="row.state === 'open'" :type="row.risk === 'high' ? 'danger' : row.risk === 'medium' ? 'warning' : 'info'" effect="dark">
-              {{ row.risk === 'high' ? '高危' : row.risk === 'medium' ? '中危' : '低危' }}
-            </el-tag>
-            <span v-else style="color: var(--text-tertiary);">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="延迟" width="90" align="center">
-          <template #default="{ row }">{{ row.state === 'open' ? row.latency_ms + 'ms' : '-' }}</template>
-        </el-table-column>
-      </el-table>
+
+      <!-- 筛选栏 -->
+      <div class="filter-bar">
+        <el-input
+          v-model="filterIP"
+          placeholder="按 IP 搜索"
+          clearable
+          :prefix-icon="Search"
+          style="width: 200px"
+        />
+        <el-select v-model="filterState" placeholder="状态" style="width: 140px">
+          <el-option label="仅开放" value="open" />
+          <el-option label="全部状态" value="all" />
+        </el-select>
+        <el-select v-model="filterRisk" placeholder="风险等级" clearable style="width: 140px">
+          <el-option label="高危" value="high" />
+          <el-option label="中危" value="medium" />
+          <el-option label="低危" value="low" />
+        </el-select>
+        <span class="filter-count">已显示 {{ filteredResultCount }} / {{ results.length }} 条</span>
+      </div>
+
+      <!-- 按 IP 分组展示 -->
+      <div v-loading="resultsLoading">
+        <el-empty v-if="groupedResults.length === 0" description="无匹配结果" :image-size="60" />
+        <el-collapse v-model="expandedIPs">
+          <el-collapse-item v-for="g in groupedResults" :key="g.ip" :name="g.ip">
+            <template #title>
+              <div class="ip-group-title">
+                <span class="ip-addr">{{ g.ip }}</span>
+                <el-tag v-if="g.openHigh > 0" type="danger" size="small" effect="dark">高危 {{ g.openHigh }}</el-tag>
+                <el-tag v-if="g.openMed > 0" type="warning" size="small" effect="dark">中危 {{ g.openMed }}</el-tag>
+                <span class="ip-sub">开放 {{ g.openCount }} 个敏感端口</span>
+              </div>
+            </template>
+            <div class="port-tags">
+              <div
+                v-for="r in g.rows"
+                :key="r.port"
+                class="port-tag"
+                :class="[r.state === 'open' ? 'open' : 'closed', r.risk]"
+              >
+                <span class="pt-port">{{ r.port }}</span>
+                <span class="pt-name">{{ r.port_name }}</span>
+                <span v-if="r.state === 'open'" class="pt-latency">{{ r.latency_ms }}ms</span>
+                <span v-else class="pt-state">{{ stateText(r.state) }}</span>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
     </el-drawer>
   </div>
 </template>
@@ -149,6 +176,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 import {
   createPortScan, getPortScanTasks, getPortScanResults, deletePortScanTask,
   getPortScanPorts, downloadPortScanReport
@@ -175,6 +203,12 @@ const currentTask = ref<PortScanTask | null>(null)
 const results = ref<PortScanResult[]>([])
 const resultsLoading = ref(false)
 
+// 结果筛选
+const filterIP = ref('')
+const filterState = ref<'open' | 'all'>('open') // 默认只看开放端口
+const filterRisk = ref<'' | 'high' | 'medium' | 'low'>('')
+const expandedIPs = ref<string[]>([])
+
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // 目标数量预览：按行粗略统计（不含 CIDR 展开的精确数，仅作提示）
@@ -183,6 +217,63 @@ const parsedTargetCount = computed(() => {
     .split(/[\n,;\s]+/)
     .map(s => s.trim())
     .filter(s => s !== '' && !s.startsWith('#')).length
+})
+
+function stateText(s: string): string {
+  switch (s) {
+    case 'open': return '开放'
+    case 'timeout': return '超时'
+    case 'refused': return '拒绝'
+    default: return '关闭'
+  }
+}
+
+// 按筛选条件过滤后的结果
+const filteredResults = computed(() => {
+  return results.value.filter(r => {
+    if (filterState.value === 'open' && r.state !== 'open') return false
+    if (filterRisk.value && r.risk !== filterRisk.value) return false
+    if (filterIP.value && !r.ip.includes(filterIP.value.trim())) return false
+    return true
+  })
+})
+
+const filteredResultCount = computed(() => filteredResults.value.length)
+
+// 按 IP 分组的展示结构
+interface IPGroup {
+  ip: string
+  rows: PortScanResult[]
+  openCount: number
+  openHigh: number
+  openMed: number
+}
+const groupedResults = computed<IPGroup[]>(() => {
+  const map = new Map<string, PortScanResult[]>()
+  for (const r of filteredResults.value) {
+    const arr = map.get(r.ip) || []
+    arr.push(r)
+    map.set(r.ip, arr)
+  }
+  const groups: IPGroup[] = []
+  for (const [ip, rows] of map) {
+    // 开放端口排前，同状态按端口号升序
+    rows.sort((a, b) => {
+      if (a.state === 'open' && b.state !== 'open') return -1
+      if (a.state !== 'open' && b.state === 'open') return 1
+      return a.port - b.port
+    })
+    const openRows = rows.filter(r => r.state === 'open')
+    groups.push({
+      ip,
+      rows,
+      openCount: openRows.length,
+      openHigh: openRows.filter(r => r.risk === 'high').length,
+      openMed: openRows.filter(r => r.risk === 'medium').length,
+    })
+  }
+  groups.sort((a, b) => b.openHigh - a.openHigh || b.openCount - a.openCount || a.ip.localeCompare(b.ip))
+  return groups
 })
 
 async function fetchDefaultPorts() {
@@ -248,9 +339,15 @@ async function viewResults(task: PortScanTask) {
   currentTask.value = task
   drawerVisible.value = true
   resultsLoading.value = true
+  // 重置筛选，默认只看开放端口
+  filterIP.value = ''
+  filterState.value = 'open'
+  filterRisk.value = ''
   try {
     const { data } = await getPortScanResults(task.id)
     results.value = data.items
+    // 默认展开所有 IP 分组
+    expandedIPs.value = [...new Set(data.items.map((r: PortScanResult) => r.ip))]
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '加载结果失败')
   } finally {
@@ -315,4 +412,25 @@ onBeforeUnmount(() => stopPolling())
 .dot.medium { background: #e6a23c; }
 .dot.low { background: #909399; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; font-size: 13px; color: var(--text-secondary, #5e6d82); }
+.filter-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.filter-count { font-size: 12px; color: var(--text-tertiary, #909399); margin-left: auto; }
+.ip-group-title { display: flex; align-items: center; gap: 8px; flex: 1; }
+.ip-addr { font-family: ui-monospace, Consolas, monospace; font-weight: 600; font-size: 14px; }
+.ip-sub { font-size: 12px; color: var(--text-tertiary, #909399); margin-left: 4px; }
+.port-tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 4px 16px; }
+.port-tag { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; font-size: 13px; border: 1px solid transparent; }
+.port-tag .pt-port { font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
+.port-tag .pt-name { color: var(--text-secondary, #5e6d82); }
+.port-tag .pt-latency { font-size: 12px; opacity: 0.8; }
+.port-tag .pt-state { font-size: 12px; color: var(--text-tertiary, #909399); }
+/* 开放端口按风险着色 */
+.port-tag.open.high { background: #fef0f0; border-color: #fbc4c4; }
+.port-tag.open.high .pt-port { color: #f56c6c; }
+.port-tag.open.medium { background: #fdf6ec; border-color: #f5dab1; }
+.port-tag.open.medium .pt-port { color: #e6a23c; }
+.port-tag.open.low { background: #f4f4f5; border-color: #e1e4e8; }
+.port-tag.open.low .pt-port { color: #909399; }
+/* 非开放端口弱化展示 */
+.port-tag.closed { background: transparent; border-color: transparent; opacity: 0.5; }
+
 </style>
