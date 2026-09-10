@@ -1297,7 +1297,7 @@ func (a *AdminAPI) handleCronJobAIAnalyze(w http.ResponseWriter, r *http.Request
 	if len(dsIDs) > 0 {
 		okCount := 0
 		for _, dsID := range dsIDs {
-			if doSingleInspection(a.config, a.collector, forceJob, &dsID) {
+			if doSingleInspection(a.config, a.collector, forceJob, &dsID, "manual_ai") {
 				okCount++
 			}
 		}
@@ -1307,7 +1307,7 @@ func (a *AdminAPI) handleCronJobAIAnalyze(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	ok := doSingleInspection(a.config, a.collector, forceJob, nil)
+	ok := doSingleInspection(a.config, a.collector, forceJob, nil, "manual_ai")
 	writeJSON(w, map[string]interface{}{
 		"success": ok, "job_id": job.ID, "job_name": job.Name,
 	})
@@ -1327,10 +1327,13 @@ func (a *AdminAPI) handleReports(w http.ResponseWriter, r *http.Request) {
 
 		query := database.DB.Model(&database.ReportRecord{})
 		if kw := r.URL.Query().Get("keyword"); kw != "" {
-			query = query.Where("title LIKE ? OR datasource_name LIKE ?", "%"+kw+"%", "%"+kw+"%")
+			query = query.Where("title LIKE ? OR datasource_name LIKE ? OR template_names LIKE ? OR inspect_task_id LIKE ?", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
 		}
 		if st := r.URL.Query().Get("status"); st != "" {
 			query = query.Where("status = ?", st)
+		}
+		if tt := r.URL.Query().Get("trigger_type"); tt != "" {
+			query = query.Where("trigger_type = ?", tt)
 		}
 
 		var total int64
@@ -1922,6 +1925,9 @@ func (a *AdminAPI) handleInspect(w http.ResponseWriter, r *http.Request) {
 		DatasourceName: dsName,
 		Message:        "巡检任务已创建，正在执行...",
 		StartedAt:      time.Now(),
+		TriggerType:    "manual",
+		TemplateIDs:    database.EncodeTemplateIDs(req.TemplateIDs),
+		TemplateNames:  database.ResolveTemplateNames(database.DB, req.TemplateIDs),
 	})
 
 	writeJSON(w, map[string]interface{}{
@@ -2051,6 +2057,10 @@ func (a *AdminAPI) runInspect(task *InspectTask, promURL, promUser, promPass str
 			WarningCount:   countWarning(data),
 			Status:         getReportStatus(data),
 			MetricsJSON:    buildHealthSnapshot(data),
+			TriggerType:    "manual",
+			InspectTaskID:  task.ID,
+			TemplateIDs:    database.EncodeTemplateIDs(req.TemplateIDs),
+			TemplateNames:  database.ResolveTemplateNames(database.DB, req.TemplateIDs),
 		})
 	}()
 
@@ -2103,6 +2113,7 @@ func (a *AdminAPI) runSingleInspect(ds database.DataSource) {
 		DatasourceName: ds.Name,
 		Message:        "巡检任务已创建，正在执行...",
 		StartedAt:      time.Now(),
+		TriggerType:    "manual",
 	})
 
 	req := struct {
@@ -2156,10 +2167,13 @@ func (a *AdminAPI) handleInspectRecords(w http.ResponseWriter, r *http.Request) 
 
 	query := database.DB.Model(&database.InspectRecord{})
 	if kw := r.URL.Query().Get("keyword"); kw != "" {
-		query = query.Where("datasource_name LIKE ? OR message LIKE ?", "%"+kw+"%", "%"+kw+"%")
+		query = query.Where("datasource_name LIKE ? OR message LIKE ? OR task_id LIKE ? OR template_names LIKE ?", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
 	}
 	if st := r.URL.Query().Get("status"); st != "" {
 		query = query.Where("status = ?", st)
+	}
+	if tt := r.URL.Query().Get("trigger_type"); tt != "" {
+		query = query.Where("trigger_type = ?", tt)
 	}
 
 	var total int64
@@ -2750,7 +2764,11 @@ func (a *AdminAPI) handleTemplateInspect(w http.ResponseWriter, r *http.Request)
 		writeError(w, 500, fmt.Sprintf("生成报告失败: %v", err))
 		return
 	}
-	saveReportRecord(data, reportPath)
+	saveReportRecord(data, reportPath, &ReportRecordContext{
+		TriggerType:   "manual",
+		TemplateIDs:   database.EncodeTemplateIDs([]uint{id}),
+		TemplateNames: database.ResolveTemplateNames(database.DB, []uint{id}),
+	})
 
 	writeJSON(w, map[string]interface{}{
 		"success": true,

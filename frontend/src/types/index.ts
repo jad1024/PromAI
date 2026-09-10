@@ -106,6 +106,12 @@ export interface ReportRecord {
   warning_count: number
   status: string
   duration?: string
+  // 溯源（Commit1）
+  trigger_type?: 'manual' | 'cron' | 'manual_ai' | 'cron_ai' | ''
+  cron_job_id?: number | null
+  inspect_task_id?: string
+  template_ids?: string
+  template_names?: string
   created_at?: string
 }
 
@@ -121,6 +127,11 @@ export interface InspectRecord {
   id: number
   task_id: string
   status: string
+  trigger_type?: 'manual' | 'cron' | 'manual_ai' | 'cron_ai' | ''
+  cron_job_id?: number | null
+  template_ids?: string
+  template_names?: string
+  alert_source_ids?: string
   datasource_name: string
   message: string
   error: string

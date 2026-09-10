@@ -196,7 +196,13 @@ type ReportRecord struct {
 	Status         string    `gorm:"size:50" json:"status"`
 	Duration       string    `gorm:"size:50" json:"duration"`
 	MetricsJSON    string    `gorm:"type:text" json:"metrics_json"`
-	CreatedAt      time.Time `json:"created_at"`
+	// 关联溯源（Commit1）
+	TriggerType   string  `gorm:"size:32;index" json:"trigger_type"` // manual / cron / manual_ai / cron_ai
+	CronJobID     *uint   `gorm:"index" json:"cron_job_id,omitempty"`
+	InspectTaskID string  `gorm:"size:100;index" json:"inspect_task_id"` // 关联 InspectRecord.TaskID
+	TemplateNames string  `gorm:"size:500" json:"template_names"`         // 冗余存名称，方便列表直接展示，如 "[华为云基础][Redis集群]"
+	TemplateIDs   string  `gorm:"type:text" json:"template_ids"`          // 原始 ID JSON
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type AppSetting struct {
@@ -248,8 +254,14 @@ type InspectRecord struct {
 	ReportURL      string     `gorm:"size:500" json:"report_url"`
 	StartedAt      time.Time  `json:"started_at"`
 	CompletedAt    *time.Time `json:"completed_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// 关联溯源（Commit1）
+	TriggerType   string `gorm:"size:32;index" json:"trigger_type"` // manual / cron / manual_ai / cron_ai
+	CronJobID     *uint  `gorm:"index" json:"cron_job_id,omitempty"`
+	TemplateIDs   string `gorm:"type:text" json:"template_ids"`    // JSON 数组，如 [1,2]
+	TemplateNames string `gorm:"size:500" json:"template_names"`  // 冗余存名称，如 "[华为云基础][Redis集群]"
+	AlertSourceIDs string `gorm:"type:text" json:"alert_source_ids"` // JSON 数组（冗余存，最终 alertSourceIDs 解析优先级仍按 CronJob→Template→nil）
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Apply applies a template-level override onto a MetricConfig

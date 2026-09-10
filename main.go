@@ -419,7 +419,7 @@ func startGlobalScheduler(config *config.Config, collector *metrics.Collector) {
 			} else {
 				log.Printf("[Cron] 未找到默认数据源，回退为全局配置巡检")
 			}
-			doSingleInspection(config, collector, database.CronJob{Name: "配置文件定时巡检"}, dsIDPtr)
+			doSingleInspection(config, collector, database.CronJob{Name: "配置文件定时巡检"}, dsIDPtr, "cron")
 		})
 		if err != nil {
 			log.Printf("[Cron] 调度配置文件任务失败: %v", err)
@@ -1346,7 +1346,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 func doInspection(cfg *config.Config, collector *metrics.Collector, job database.CronJob) {
 	dsIDs := resolveJobDatasourceIDs(job)
 	if len(dsIDs) == 0 {
-		doSingleInspection(cfg, collector, job, nil)
+		doSingleInspection(cfg, collector, job, nil, "cron")
 		return
 	}
 
@@ -1371,7 +1371,7 @@ func doInspection(cfg *config.Config, collector *metrics.Collector, job database
 			id := dsID
 			go func() {
 				defer wg.Done()
-				if doSingleInspection(cfg, collector, job, &id) {
+				if doSingleInspection(cfg, collector, job, &id, "cron") {
 					mu.Lock()
 					anySuccess = true
 					mu.Unlock()
@@ -1389,8 +1389,18 @@ func doInspection(cfg *config.Config, collector *metrics.Collector, job database
 }
 
 // doSingleInspection 对单个数据源执行巡检，创建 InspectRecord 并保存报告
-func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job database.CronJob, dsIDPtr *uint) bool {
+// triggerType: "cron"（定时任务自动）/ "manual_ai"（手动点 cron 任务的 AI 分析按钮）
+func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job database.CronJob, dsIDPtr *uint, triggerType string) bool {
 	taskID := fmt.Sprintf("cron_%d_%d_%d", job.ID, time.Now().Unix(), atomic.AddInt64(&cronTaskCounter, 1))
+
+	// 解析当前任务关联的模版名（用于记录展示）
+	var tmplIDs []uint
+	if job.TemplateIDs != "" {
+		_ = json.Unmarshal([]byte(job.TemplateIDs), &tmplIDs)
+	}
+	tmplIDsJSON := job.TemplateIDs
+	tmplNames := database.ResolveTemplateNames(database.DB, tmplIDs)
+	jobIDCopy := job.ID // for closure on the safe value
 
 	if dsIDPtr != nil {
 		dsID := *dsIDPtr
@@ -1402,6 +1412,9 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 				DatasourceID: &dsID, DatasourceName: fmt.Sprintf("数据源 %d", dsID),
 				Message: "数据源不存在", Error: "数据源不存在",
 				StartedAt: time.Now(), CompletedAt: &[]time.Time{time.Now()}[0],
+				TriggerType: triggerType,
+				CronJobID:   &jobIDCopy,
+				TemplateIDs: tmplIDsJSON, TemplateNames: tmplNames,
 			})
 			return false
 		}
@@ -1413,6 +1426,8 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 				TaskID: taskID, Status: "failed", DatasourceID: &dsID,
 				DatasourceName: ds.Name, Message: "创建客户端失败", Error: err.Error(),
 				StartedAt: time.Now(), CompletedAt: &[]time.Time{time.Now()}[0],
+				TriggerType: triggerType, CronJobID: &jobIDCopy,
+				TemplateIDs: tmplIDsJSON, TemplateNames: tmplNames,
 			})
 			return false
 		}
@@ -1432,6 +1447,8 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 				TaskID: taskID, Status: "failed", DatasourceID: &dsID,
 				DatasourceName: ds.Name, Message: "数据源不可用", Error: err.Error(),
 				StartedAt: time.Now(), CompletedAt: &[]time.Time{time.Now()}[0],
+				TriggerType: triggerType, CronJobID: &jobIDCopy,
+				TemplateIDs: tmplIDsJSON, TemplateNames: tmplNames,
 			})
 			return false
 		}
@@ -1449,6 +1466,8 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 			TaskID: taskID, Status: "running", DatasourceID: &dsID,
 			DatasourceName: ds.Name, Message: "正在执行巡检...",
 			StartedAt: time.Now(),
+			TriggerType: triggerType, CronJobID: &jobIDCopy,
+			TemplateIDs: tmplIDsJSON, TemplateNames: tmplNames,
 		})
 
 		dsCollector := metrics.NewCollectorWithURL(client.API, activeCfg, ds.URL)
@@ -1471,7 +1490,13 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 			})
 			return false
 		}
-		saveReportRecord(data, reportFilePath)
+		saveReportRecord(data, reportFilePath, &ReportRecordContext{
+			TriggerType:   triggerType,
+			CronJobID:     &jobIDCopy,
+			InspectTaskID: taskID,
+			TemplateIDs:   tmplIDsJSON,
+			TemplateNames: tmplNames,
+		})
 		sendInspectionNotifications(cfg, job, reportFilePath, data)
 		reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
 		database.DB.Model(&database.InspectRecord{}).Where("task_id = ?", taskID).Updates(map[string]interface{}{
@@ -1492,6 +1517,8 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 			TaskID: taskID, Status: "failed",
 			DatasourceName: cfg.PrometheusURL, Message: "创建客户端失败", Error: err.Error(),
 			StartedAt: time.Now(), CompletedAt: &[]time.Time{time.Now()}[0],
+			TriggerType: triggerType, CronJobID: &jobIDCopy,
+			TemplateIDs: tmplIDsJSON, TemplateNames: tmplNames,
 		})
 		return false
 	}
@@ -1502,6 +1529,8 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 			TaskID: taskID, Status: "failed",
 			DatasourceName: cfg.PrometheusURL, Message: "数据源不可用", Error: err.Error(),
 			StartedAt: time.Now(), CompletedAt: &[]time.Time{time.Now()}[0],
+			TriggerType: triggerType, CronJobID: &jobIDCopy,
+			TemplateIDs: tmplIDsJSON, TemplateNames: tmplNames,
 		})
 		return false
 	}
@@ -1511,6 +1540,8 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 		TaskID: taskID, Status: "running",
 		DatasourceName: cfg.PrometheusURL, Message: "正在执行巡检...",
 		StartedAt: time.Now(),
+		TriggerType: triggerType, CronJobID: &jobIDCopy,
+		TemplateIDs: tmplIDsJSON, TemplateNames: tmplNames,
 	})
 	// 应用定时任务指定的指标范围（未指定则为全部）
 	var data *report.ReportData
@@ -1539,7 +1570,13 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 		})
 		return false
 	}
-	saveReportRecord(data, reportFilePath)
+	saveReportRecord(data, reportFilePath, &ReportRecordContext{
+		TriggerType:   triggerType,
+		CronJobID:     &jobIDCopy,
+		InspectTaskID: taskID,
+		TemplateIDs:   tmplIDsJSON,
+		TemplateNames: tmplNames,
+	})
 	sendInspectionNotifications(cfg, job, reportFilePath, data)
 	reportURL := "/api/promai/reports/" + filepath.Base(reportFilePath)
 	database.DB.Model(&database.InspectRecord{}).Where("task_id = ?", taskID).Updates(map[string]interface{}{
@@ -1650,7 +1687,7 @@ func loadJobMetricConfigs(job database.CronJob) []database.MetricConfig {
 }
 
 // saveReportRecord 保存报告记录到数据库
-func saveReportRecord(data *report.ReportData, reportPath string) {
+func saveReportRecord(data *report.ReportData, reportPath string, ctx ...*ReportRecordContext) {
 	alertCount := 0
 	criticalCount := 0
 	warningCount := 0
@@ -1689,7 +1726,8 @@ func saveReportRecord(data *report.ReportData, reportPath string) {
 	if database.DB.Where("url = ?", data.Datasource).First(&dsRecord).Error == nil {
 		dsID = &dsRecord.ID
 	}
-	database.DB.Create(&database.ReportRecord{
+
+	rec := &database.ReportRecord{
 		Title: func() string {
 			title := strings.TrimSpace(data.Project)
 			if title == "" {
@@ -1701,18 +1739,38 @@ func saveReportRecord(data *report.ReportData, reportPath string) {
 		DatasourceName: data.Datasource,
 		FilePath:       reportPath,
 		FileSize: func() int64 {
-			if info != nil {
-				return info.Size()
-			}
-			return 0
-		}(),
+		if info != nil {
+			return info.Size()
+		}
+		return 0
+	}(),
 		TotalMetrics:  totalMetrics,
 		AlertCount:    alertCount,
 		CriticalCount: criticalCount,
 		WarningCount:  warningCount,
 		Status:        status,
 		MetricsJSON:   buildHealthSnapshot(data),
-	})
+	}
+	// 应用溯源上下文（如有）
+	if len(ctx) > 0 && ctx[0] != nil {
+		c := ctx[0]
+		rec.TriggerType = c.TriggerType
+		rec.CronJobID = c.CronJobID
+		rec.InspectTaskID = c.InspectTaskID
+		rec.TemplateIDs = c.TemplateIDs
+		rec.TemplateNames = c.TemplateNames
+	}
+	database.DB.Create(rec)
+}
+
+// ReportRecordContext 保存 ReportRecord 时附带的溯源信息（手动/定时触发、关联任务、模版等）。
+// 调用方可选传入；为 nil 时只写基础字段（保持向后兼容）。
+type ReportRecordContext struct {
+	TriggerType   string
+	CronJobID     *uint
+	InspectTaskID string
+	TemplateIDs   string // JSON 数组
+	TemplateNames string // 冗余展示串，如 "[华为云基础][Redis集群]"
 }
 
 // tasksHandler 处理任务列表API

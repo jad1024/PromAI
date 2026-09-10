@@ -9,29 +9,57 @@
       <div class="section-header">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><List /></el-icon> 历史报告</h3>
         <div style="display: flex; gap: 8px; align-items: center;">
-          <el-input v-model="keyword" placeholder="搜索标题/数据源" clearable style="width: 200px;" @keyup.enter="fetchData" @clear="fetchData" />
+          <el-input v-model="keyword" placeholder="搜索标题/数据源/模版/任务ID" clearable style="width: 240px;" @keyup.enter="fetchData" @clear="fetchData" />
           <el-select v-model="statusFilter" placeholder="状态" clearable style="width: 110px;" @change="fetchData">
             <el-option label="正常" value="success" />
             <el-option label="告警" value="warning" />
             <el-option label="高危" value="danger" />
           </el-select>
+          <el-select v-model="triggerFilter" placeholder="触发类型" clearable style="width: 130px;" @change="fetchData">
+            <el-option label="手动" value="manual" />
+            <el-option label="定时" value="cron" />
+            <el-option label="手动+AI" value="manual_ai" />
+            <el-option label="定时+AI" value="cron_ai" />
+          </el-select>
           <el-button plain @click="fetchData" :loading="loading"><el-icon><Refresh /></el-icon> 刷新</el-button>
         </div>
       </div>
-      <el-table :data="reports" v-loading="loading" stripe>
+      <el-table :data="reports" v-loading="loading" stripe row-class-name="clickable-row"
+        @row-click="onRowClick">
         <el-table-column type="index" label="#" width="56" />
         <el-table-column prop="title" label="报告名称" min-width="220">
           <template #default="{ row }">
             <span style="font-weight: 600; color: var(--text-primary);">{{ row.title }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="datasource_name" label="数据源" min-width="180" />
-        <el-table-column label="指标" width="80" align="center">
+        <el-table-column label="触发类型" width="120">
+          <template #default="{ row }">
+            <el-tag :type="triggerTagType(row.trigger_type)" effect="plain" size="small">
+              {{ triggerLabel(row.trigger_type) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="使用模版" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.template_names">{{ row.template_names }}</span>
+            <span v-else style="color: var(--text-tertiary);">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="datasource_name" label="数据源" min-width="160" />
+        <el-table-column label="来源任务" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <a v-if="row.inspect_task_id" class="link-cyan" @click.stop="goInspectRecord(row)">
+              {{ row.inspect_task_id }}
+            </a>
+            <span v-else style="color: var(--text-tertiary);">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="指标" width="70" align="center">
           <template #default="{ row }">
             <span style="color: var(--cyan); font-weight: 700;">{{ row.total_metrics }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="告警" width="80" align="center">
+        <el-table-column label="告警" width="70" align="center">
           <template #default="{ row }">
             <span v-if="row.alert_count > 0" style="color: var(--red); font-weight: 700;">{{ row.alert_count }}</span>
             <span v-else style="color: var(--emerald);">0</span>
@@ -56,10 +84,10 @@
           <template #default="{ row }">
             <div class="row-actions">
               <el-tooltip content="查看" placement="top">
-                <el-button size="small" text style="color: var(--cyan);" @click="viewReport(row)"><el-icon><View /></el-icon></el-button>
+                <el-button size="small" text style="color: var(--cyan);" @click.stop="viewReport(row)"><el-icon><View /></el-icon></el-button>
               </el-tooltip>
               <el-tooltip content="删除" placement="top">
-                <el-button size="small" text type="danger" @click="handleDelete(row)"><el-icon><Delete /></el-icon></el-button>
+                <el-button size="small" text type="danger" @click.stop="handleDelete(row)"><el-icon><Delete /></el-icon></el-button>
               </el-tooltip>
             </div>
           </template>
@@ -83,6 +111,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getReports, deleteReport, openReportFile } from '../api'
@@ -92,6 +121,8 @@ function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
+const router = useRouter()
+
 const loading = ref(false)
 const reports = ref<ReportRecord[]>([])
 const page = ref(1)
@@ -99,6 +130,26 @@ const pageSize = ref(20)
 const total = ref(0)
 const keyword = ref('')
 const statusFilter = ref('')
+const triggerFilter = ref<'' | 'manual' | 'cron' | 'manual_ai' | 'cron_ai'>('')
+
+function triggerLabel(t?: ReportRecord['trigger_type']): string {
+  switch (t) {
+    case 'manual': return '手动'
+    case 'cron': return '定时'
+    case 'manual_ai': return '手动+AI'
+    case 'cron_ai': return '定时+AI'
+    default: return '未知'
+  }
+}
+function triggerTagType(t?: ReportRecord['trigger_type']): 'info' | 'primary' | 'warning' | 'success' {
+  switch (t) {
+    case 'manual': return 'info'
+    case 'cron': return 'primary'
+    case 'manual_ai': return 'warning'
+    case 'cron_ai': return 'success'
+    default: return 'info'
+  }
+}
 
 async function fetchData() {
   loading.value = true
@@ -106,6 +157,7 @@ async function fetchData() {
     const params: any = { page: page.value, page_size: pageSize.value }
     if (keyword.value) params.keyword = keyword.value
     if (statusFilter.value) params.status = statusFilter.value
+    if (triggerFilter.value) params.trigger_type = triggerFilter.value
     const res = await getReports(params)
     reports.value = res.data.items
     total.value = res.data.total
@@ -119,6 +171,15 @@ function viewReport(row: ReportRecord) {
   openReportFile('reports/' + filename).catch((e: any) => ElMessage.error('打开报告失败：' + e.message))
 }
 
+function goInspectRecord(row: ReportRecord) {
+  if (!row.inspect_task_id) return
+  router.push({ path: '/inspect-records', query: { task_id: row.inspect_task_id } })
+}
+
+function onRowClick(row: ReportRecord) {
+  viewReport(row)
+}
+
 async function handleDelete(row: ReportRecord) {
   try {
     await ElMessageBox.confirm(`确定删除「${row.title}」？`, '确认删除', { type: 'warning', cancelButtonText: '取消', confirmButtonText: '删除' })
@@ -128,3 +189,14 @@ async function handleDelete(row: ReportRecord) {
 
 onMounted(fetchData)
 </script>
+
+<style scoped>
+.clickable-row { cursor: pointer; }
+.link-cyan {
+  color: var(--cyan);
+  text-decoration: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.link-cyan:hover { text-decoration: underline; }
+</style>

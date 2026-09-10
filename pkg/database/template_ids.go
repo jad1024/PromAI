@@ -2,11 +2,49 @@ package database
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
 )
+
+// ResolveTemplateNames 从模板 ID 数组查表得到 `[名称A][名称B]` 形式的展示串。
+// 任一 ID 查不到时跳过该 ID（不影响其它）。所有 ID 都为空时返回空串。
+func ResolveTemplateNames(db *gorm.DB, ids []uint) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	var tpls []InspectionTemplate
+	if err := db.Where("id IN ?", ids).Find(&tpls).Error; err != nil {
+		return ""
+	}
+	nameByID := make(map[uint]string, len(tpls))
+	for _, t := range tpls {
+		nameByID[t.ID] = t.Name
+	}
+	var b strings.Builder
+	for _, id := range ids {
+		if name, ok := nameByID[id]; ok {
+			b.WriteString("[")
+			b.WriteString(name)
+			b.WriteString("]")
+		}
+	}
+	return b.String()
+}
+
+// StringifyTemplateIDs 将 ID 数组序列化为 JSON 字符串（空数组返回 ""）。
+func StringifyTemplateIDs(ids []uint) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Sprintf("%v", ids)
+	}
+	return string(b)
+}
 
 func ParseTemplateIDs(raw string) []uint {
 	raw = strings.TrimSpace(raw)
