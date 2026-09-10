@@ -361,6 +361,44 @@
             .chart-container { break-inside: avoid; }
             tr.warning, tr.normal, tr.critical { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
+
+        /* ===== 告警事件段样式 ===== */
+        .alerts-section .alerts-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 12px; background: rgba(99, 102, 241, 0.06);
+            border-radius: 6px; margin-bottom: 12px;
+        }
+        .alerts-filter-label { color: var(--text-secondary, #475569); font-weight: 600; }
+        .alerts-stats .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-weight: 700; margin-right: 4px; }
+        .alerts-stats .badge.firing { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+        .alerts-stats .badge.pending { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+        .alerts-empty { padding: 16px; text-align: center; color: var(--text-tertiary, #94a3b8); }
+        .alerts-empty .empty-icon { font-size: 28px; color: #10b981; margin-right: 8px; }
+        .sub-h { font-size: 14px; margin: 16px 0 8px; color: var(--text-secondary, #475569); }
+        table.alerts-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        table.alerts-table th, table.alerts-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-color, #e2e8f0); }
+        table.alerts-table th { background: rgba(99, 102, 241, 0.05); font-weight: 600; }
+        table.alerts-table tr.sev-critical td:first { border-left: 3px solid #ef4444; }
+        table.alerts-table tr.sev-warning td:first { border-left: 3px solid #f59e0b; }
+        .alert-name { font-weight: 600; color: var(--text-primary, #0f172a); }
+        .expected-tag {
+            display: inline-block; margin-left: 6px;
+            padding: 1px 6px; border-radius: 4px; font-size: 11px;
+            background: rgba(99, 102, 241, 0.12); color: #6366f1;
+        }
+        .sev-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+        .sev-pill.critical { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+        .sev-pill.warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+        .sev-pill.info { background: rgba(99, 102, 241, 0.15); color: #6366f1; }
+        .sev-pill.unknown { background: rgba(100, 116, 139, 0.15); color: #64748b; }
+        .value-thresh { font-family: 'JetBrains Mono', monospace; color: var(--text-primary, #0f172a); }
+        .label-list .kv { display: inline-block; margin: 1px 3px; font-size: 11px; }
+        .label-list .kv b { color: #475569; }
+        .storm-tag {
+            display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+            background: rgba(239, 68, 68, 0.15); color: #ef4444; font-weight: 700;
+        }
+        #incidents-table th, #incidents-table td { padding: 6px 10px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -419,6 +457,45 @@
                 </div>
             </div>
             {{end}}
+                </div>
+            </div>
+        </div>
+
+        <!-- 告警事件段（按告警源过滤） -->
+        <div class="section alerts-section" id="alerts-section">
+            <div class="section-header">
+                <h2>告警事件</h2>
+                <button class="toggle-btn" onclick="toggleSection(this)">收起</button>
+            </div>
+            <div class="section-content">
+                <div class="alerts-header">
+                    <span id="alerts-source-filter" class="alerts-filter-label">—</span>
+                    <span class="alerts-stats">
+                        <span class="badge firing" id="alerts-total-firing">0</span> firing
+                        <span class="badge pending" id="alerts-total-pending">0</span> pending
+                    </span>
+                </div>
+                <div id="alerts-empty" class="alerts-empty" style="display:none;">
+                    <span class="empty-icon">✓</span>
+                    当前无活跃告警。
+                </div>
+                <div id="alerts-list-wrap"></div>
+                <div id="incidents-wrap">
+                    <h3 class="sub-h">事件聚合（按告警名称汇总）</h3>
+                    <table id="incidents-table" style="display:none;">
+                        <thead>
+                            <tr>
+                                <th>告警名称</th>
+                                <th>严重度</th>
+                                <th>实例数</th>
+                                <th>来源数</th>
+                                <th>预期行为</th>
+                                <th>标记</th>
+                            </tr>
+                        </thead>
+                        <tbody id="incidents-tbody"></tbody>
+                    </table>
+                    <p id="incidents-empty" class="alerts-empty" style="display:none;">无事件聚合记录。</p>
                 </div>
             </div>
         </div>
@@ -508,6 +585,7 @@
     // ---------- 图表初始化 ----------
     const ctx = document.getElementById('resourceChart').getContext('2d');
     const data = {{.ChartData.metricsData}};
+    const alertData = {{.ChartData.alertData}};
     const labels = [];
     const datasets = [];
 
@@ -782,6 +860,93 @@
             });
         });
     });
+
+    // ---------- 告警段渲染 ----------
+    (function renderAlerts() {
+        const sec = document.getElementById('alerts-section');
+        if (!sec) return;
+        const ad = (typeof alertData === 'object' && alertData) || null;
+        const filterLabel = document.getElementById('alerts-source-filter');
+        const firingEl = document.getElementById('alerts-total-firing');
+        const pendingEl = document.getElementById('alerts-total-pending');
+        const emptyEl = document.getElementById('alerts-empty');
+        const listWrap = document.getElementById('alerts-list-wrap');
+        const incTable = document.getElementById('incidents-table');
+        const incTbody = document.getElementById('incidents-tbody');
+        const incEmpty = document.getElementById('incidents-empty');
+
+        if (!ad) {
+            if (filterLabel) filterLabel.textContent = '未生成告警数据';
+            if (emptyEl) emptyEl.style.display = '';
+            return;
+        }
+        if (filterLabel) filterLabel.textContent = ad.source_filter_label || '全部告警源';
+        if (firingEl) firingEl.textContent = ad.total_firing || 0;
+        if (pendingEl) pendingEl.textContent = ad.total_pending || 0;
+
+        const alerts = Array.isArray(ad.alerts) ? ad.alerts : [];
+        if (alerts.length === 0) {
+            if (emptyEl) emptyEl.style.display = '';
+        } else {
+            if (emptyEl) emptyEl.style.display = 'none';
+            let html = '<table class="alerts-table"><thead><tr>'
+                + '<th>告警名称</th><th>级别</th><th>状态</th><th>来源</th>'
+                + '<th>已持续</th><th>当前值/阈值</th><th>标签</th></tr></thead><tbody>';
+            alerts.forEach(function (a) {
+                const sev = a.severity || 'unknown';
+                const state = a.state || '';
+                const name = a.alertname || '';
+                const source = a.source || '';
+                const dur = a.duration || '';
+                const vt = (a.value || a.threshold) ? ('<span class="value-thresh">' + (a.value||0).toFixed(2) + ' / ' + (a.threshold||0).toFixed(2) + '</span>') : '-';
+                const labelMap = a.labels || {};
+                const labelPairs = Object.keys(labelMap).map(function(k){
+                    return '<span class="kv"><b>' + escapeHtml(k) + '</b>=<span>' + escapeHtml(labelMap[k]) + '</span></span>';
+                }).join(' ');
+                const expectedTag = a.expected ? ('<span class="expected-tag">预期行为: ' + escapeHtml(a.expected) + '</span>') : '';
+                html += '<tr class="alert-row sev-' + escapeHtml(sev) + ' state-' + escapeHtml(state) + '">'
+                    + '<td><div class="alert-name">' + escapeHtml(name) + expectedTag + '</div></td>'
+                    + '<td><span class="sev-pill ' + escapeHtml(sev) + '">' + escapeHtml(sev) + '</span></td>'
+                    + '<td>' + escapeHtml(state) + '</td>'
+                    + '<td>' + escapeHtml(source) + '</td>'
+                    + '<td>' + escapeHtml(dur) + '</td>'
+                    + '<td>' + vt + '</td>'
+                    + '<td><div class="label-list">' + labelPairs + '</div></td>'
+                    + '</tr>';
+            });
+            html += '</tbody></table>';
+            listWrap.innerHTML = html;
+        }
+
+        const incidents = Array.isArray(ad.incidents) ? ad.incidents : [];
+        if (incidents.length === 0) {
+            if (incTable) incTable.style.display = 'none';
+            if (incEmpty) incEmpty.style.display = '';
+        } else {
+            if (incEmpty) incEmpty.style.display = 'none';
+            if (incTable) incTable.style.display = '';
+            incTbody.innerHTML = incidents.map(function (r) {
+                const stormTag = r.is_storm ? '<span class="storm-tag">告警风暴</span>' : '';
+                const expTag = r.expected_count > 0 ? ('<span class="expected-tag">' + r.expected_count + ' 预期</span>') : '';
+                return '<tr>'
+                    + '<td>' + escapeHtml(r.alertname) + '</td>'
+                    + '<td><span class="sev-pill ' + escapeHtml(r.severity) + '">' + escapeHtml(r.severity) + '</span></td>'
+                    + '<td>' + (r.instance_count||0) + '</td>'
+                    + '<td>' + (r.source_count||0) + '</td>'
+                    + '<td>' + (r.expected_count||0) + '</td>'
+                    + '<td>' + stormTag + ' ' + expTag + '</td>'
+                    + '</tr>';
+            }).join('');
+        }
+    })();
+
+    // HTML 转义（告警标签/注解可能含特殊字符）
+    function escapeHtml(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/[&<>"']/g, function (c) {
+            return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+        });
+    }
 </script>
 </body>
 </html>

@@ -2006,6 +2006,8 @@ func (a *AdminAPI) runInspect(task *InspectTask, promURL, promUser, promPass str
 		}
 		data.Datasource = promURL
 		setLatestReport(promURL, reportDataToHealth(data))
+		// 手动巡检：从用户选择的模版反查告警源隔离，与 cron 路径一致
+		populateReportAlertSummary(data, resolveTemplateAlertSourceIDs(req.TemplateIDs))
 
 		reportPath, runErr = report.GenerateReport(*data)
 		if runErr != nil {
@@ -2758,6 +2760,7 @@ func (a *AdminAPI) handleTemplateInspect(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	data.Datasource = promURL
+	populateReportAlertSummary(data, resolveTemplateAlertSourceIDs([]uint{id}))
 
 	reportPath, err := report.GenerateReport(*data)
 	if err != nil {

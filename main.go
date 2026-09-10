@@ -1481,6 +1481,7 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 		}
 		data.Datasource = ds.URL
 		setLatestReport(data.Datasource, reportDataToHealth(data))
+		populateReportAlertSummary(data, resolveJobAlertSourceIDs(job))
 
 		reportFilePath, err := report.GenerateReport(*data)
 		if err != nil {
@@ -1562,6 +1563,7 @@ func doSingleInspection(cfg *config.Config, collector *metrics.Collector, job da
 	}
 	data.Datasource = cfg.PrometheusURL
 	setLatestReport(data.Datasource, reportDataToHealth(data))
+	populateReportAlertSummary(data, resolveJobAlertSourceIDs(job))
 	reportFilePath, err := report.GenerateReport(*data)
 	if err != nil {
 		log.Printf("[Cron] 生成报告失败: %v", err)
@@ -1628,6 +1630,16 @@ func resolveJobAlertSourceIDs(job database.CronJob) []uint {
 	if err := json.Unmarshal([]byte(job.TemplateIDs), &templateIDs); err != nil || len(templateIDs) == 0 {
 		return nil
 	}
+	return resolveTemplateAlertSourceIDs(templateIDs)
+}
+
+// resolveTemplateAlertSourceIDs 给定一组模版 ID，返回它们 AlertSourceIDs 的合并去重。
+// 返回 nil 表示没有任何模版配置了告警源（沿用全部告警）。
+// 用于手动巡检路径下，从用户选择的模版反查告警源隔离。
+func resolveTemplateAlertSourceIDs(templateIDs []uint) []uint {
+	if len(templateIDs) == 0 {
+		return nil
+	}
 	var templates []database.InspectionTemplate
 	if err := database.DB.Select("id, alert_source_ids").Where("id IN ?", templateIDs).Find(&templates).Error; err != nil {
 		return nil
@@ -1653,6 +1665,17 @@ func resolveJobAlertSourceIDs(job database.CronJob) []uint {
 		return nil
 	}
 	return out
+}
+
+// populateReportAlertSummary 调用 piagent.CollectInspectionAlertData，把结果放到 ReportData.AlertSummary。
+// 报告生成时（report.GenerateReport）会把它序列化为 ChartData["alertData"]，由前端 HTML 渲染。
+// alertSourceIDs 为空表示不过滤告警。
+func populateReportAlertSummary(data *report.ReportData, alertSourceIDs []uint) {
+	if data == nil {
+		return
+	}
+	summary := piagent.CollectInspectionAlertData(15, alertSourceIDs)
+	data.AlertSummary = summary.ToMap()
 }
 
 // dedupeUints 去重并保持顺序。

@@ -61,6 +61,9 @@ type ReportData struct {
 	Project      string
 	Datasource   string
 	ReportUrl    string
+	// 告警事件段（按 alertSourceIDs 过滤后的活跃告警 + 事件聚合）。
+	// 由 pkg/pi-agent.CollectInspectionAlertData 生成，再转 map[string]interface{} 传入。
+	AlertSummary map[string]interface{} `json:"-"`
 }
 
 func GetStatusText(status string) string {
@@ -227,6 +230,18 @@ func GenerateReport(data ReportData) (string, error) {
 		return "", fmt.Errorf("marshaling metric groups: %w", err)
 	}
 	data.ChartData["metricsData"] = template.JS(metricsJSON)
+
+	// 告警事件段 JSON（如有 AlertSummary 则序列化供前端渲染）
+	if data.AlertSummary != nil {
+		alertsJSON, err := json.Marshal(data.AlertSummary)
+		if err != nil {
+			return "", fmt.Errorf("marshaling alert summary: %w", err)
+		}
+		data.ChartData["alertData"] = template.JS(alertsJSON)
+	} else {
+		// 显式置空，避免模板端逻辑跳到未定义
+		data.ChartData["alertData"] = template.JS("null")
+	}
 
 	// 生成报告
 	tmpl, err := template.ParseFiles("templates/report.html")
