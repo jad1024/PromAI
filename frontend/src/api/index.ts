@@ -210,7 +210,7 @@ export const testAiModel = (model: {
 import type {
   AlertRule, AlertInstance, AlertHistoryRow, HistorySession, AlertSilence, AlertInhibit, AlertRoute,
   AlertGroup, AlertNotifyLog, AlertStats, EvaluatorStatus, TestRuleResult, TimelineGroup,
-  AlertIncidentList, AlertIncident, AlertNoiseTop, DenoiseConfig,
+  AlertIncidentList, AlertIncident, AlertNoiseTop, DenoiseConfig, InspectionExpectation,
 } from '../types/alerting'
 
 export const getAlertRules = (params?: { keyword?: string; severity?: string; enabled?: string; origin?: string; source_type?: string; page?: number; page_size?: number }) =>
@@ -286,6 +286,14 @@ export const getAlertInhibit = (id: number) => api.get<AlertInhibit>(`/alert/inh
 export const createAlertInhibit = (i: AlertInhibit) => api.post<AlertInhibit>('/alert/inhibits', i)
 export const updateAlertInhibit = (id: number, i: AlertInhibit) => api.put<AlertInhibit>(`/alert/inhibits/${id}`, i)
 export const deleteAlertInhibit = (id: number) => api.delete(`/alert/inhibits/${id}`)
+
+// 巡检预期行为（按 label 匹配，AI 巡检分析时标注但不排除）
+export const getInspectionExpectations = (params?: { page?: number; page_size?: number }) =>
+  api.get<{ items: InspectionExpectation[]; total: number }>('/alert/expectations', { params })
+export const getInspectionExpectation = (id: number) => api.get<InspectionExpectation>(`/alert/expectations/${id}`)
+export const createInspectionExpectation = (e: InspectionExpectation) => api.post<InspectionExpectation>('/alert/expectations', e)
+export const updateInspectionExpectation = (id: number, e: InspectionExpectation) => api.put<InspectionExpectation>(`/alert/expectations/${id}`, e)
+export const deleteInspectionExpectation = (id: number) => api.delete(`/alert/expectations/${id}`)
 
 export const getAlertRoutes = () => api.get<{ items: AlertRoute[]; total: number }>('/alert/routes')
 export const getAlertRoute = (id: number) => api.get<AlertRoute>(`/alert/routes/${id}`)

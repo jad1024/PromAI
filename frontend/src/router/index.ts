@@ -121,6 +121,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '抑制规则', icon: 'Filter' },
   },
   {
+    path: '/alert-expectations',
+    name: 'InspectionExpectations',
+    component: () => import('../views/InspectionExpectations.vue'),
+    meta: { title: '预期行为', icon: 'Aim' },
+  },
+  {
     path: '/alert-routes',
     name: 'AlertRoutes',
     component: () => import('../views/AlertRoutes.vue'),

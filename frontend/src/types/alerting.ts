@@ -184,6 +184,17 @@ export interface AlertInhibit {
   updated_at?: string
 }
 
+export interface InspectionExpectation {
+  id?: number
+  name: string
+  comment?: string
+  matchers_json: string
+  created_by?: string
+  enabled: boolean
+  created_at?: string
+  updated_at?: string
+}
+
 export interface AlertRoute {
   id?: number
   parent_id?: number | null

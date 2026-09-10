@@ -503,6 +503,22 @@ type AlertInhibit struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+// InspectionExpectation 巡检预期行为规则。
+// 按 label matcher 匹配活跃告警实例；匹配到的告警在 AI 巡检分析时标注为「预期行为」，
+// 让 AI 知道这是正常情况、不算异常（如实时流 Redis 命中率低是预期）。
+// 与 AlertSilence 的区别：① 无时效（永久，直到手动删除/禁用）；② 只影响 AI 巡检分析的
+// 上下文标注，不影响告警触发 / 通知 / 静默。标注但不排除，AI 仍能看到完整告警清单。
+type InspectionExpectation struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Name         string    `gorm:"size:200;not null" json:"name"`      // 规则名，如「实时流 Redis 命中率低」
+	Comment      string    `gorm:"size:500" json:"comment"`            // 说明，如「实时流数据为预期行为，命中率低属正常」
+	MatchersJSON string    `gorm:"type:text;not null" json:"matchers_json"` // label matcher JSON（AND 关系）
+	CreatedBy    string    `gorm:"size:100" json:"created_by"`
+	Enabled      bool      `gorm:"default:true;index" json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // AlertRoute 通知路由（扁平表模拟树）
 type AlertRoute struct {
 	ID                  uint      `gorm:"primaryKey" json:"id"`
@@ -707,6 +723,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&AiAnalysisRecord{},
 		&ExternalAlertSource{},
 		&ExternalRule{},
+		&InspectionExpectation{},
 		// 敏感端口扫描
 		&PortScanTask{},
 		&PortScanResult{},

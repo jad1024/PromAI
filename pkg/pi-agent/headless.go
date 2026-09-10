@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"PromAI/pkg/alerting"
 	"PromAI/pkg/alerting/webhook"
 	"PromAI/pkg/database"
 	"PromAI/pkg/report"
@@ -552,6 +553,43 @@ func buildInspectionAnalysisPrompt(data *report.ReportData, reportURL string, al
 	return b.String()
 }
 
+// inspectionExpectation 已解析的巡检预期行为规则（内存态）。
+type inspectionExpectation struct {
+	name     string
+	matchers []alerting.Matcher
+}
+
+// loadInspectionExpectations 加载所有启用的巡检预期行为规则。
+// 用于 AI 巡检分析时对匹配的告警实例标注「预期行为」。
+func loadInspectionExpectations() []inspectionExpectation {
+	if database.DB == nil {
+		return nil
+	}
+	var rows []database.InspectionExpectation
+	if err := database.DB.Where("enabled = ?", true).Find(&rows).Error; err != nil || len(rows) == 0 {
+		return nil
+	}
+	out := make([]inspectionExpectation, 0, len(rows))
+	for _, r := range rows {
+		ms, err := alerting.DecodeMatchers(r.MatchersJSON)
+		if err != nil || len(ms) == 0 {
+			continue
+		}
+		out = append(out, inspectionExpectation{name: r.Name, matchers: ms})
+	}
+	return out
+}
+
+// matchExpectation 返回命中的预期行为规则名（空串表示未命中）。
+func matchExpectation(exps []inspectionExpectation, labels map[string]string) string {
+	for _, e := range exps {
+		if alerting.MatchAll(e.matchers, labels) {
+			return e.name
+		}
+	}
+	return ""
+}
+
 // collectActiveAlerts 收集当前活跃告警（firing/pending），供巡检 AI 分析作为上下文。
 // 覆盖本地告警与外部告警源（n9e/华为云）汇入的实例。
 // alertSourceIDs 非空时，仅保留 external_source_id 属于该集合的实例（用于按平台/告警源隔离上下文）；
@@ -577,6 +615,9 @@ func collectActiveAlerts(max int, alertSourceIDs []uint) []string {
 	if len(insts) == 0 {
 		return nil
 	}
+
+	// 加载预期行为规则（用于标注「超阈值但属正常」的告警）
+	expectations := loadInspectionExpectations()
 
 	// 规则名映射（本地告警）
 	var rules []database.AlertRule
@@ -622,6 +663,11 @@ func collectActiveAlerts(max int, alertSourceIDs []uint) []string {
 			sev = "unknown"
 		}
 		detail := fmt.Sprintf("- [%s] %s（来源: %s，状态: %s，已持续 %s）", sev, name, ds, in.State, durationHuman(time.Since(in.ActiveAt)))
+
+		// 预期行为标注：命中的告警虽超阈值，但属已知正常情况（如实时流 Redis 命中率低）
+		if expName := matchExpectation(expectations, labels); expName != "" {
+			detail += fmt.Sprintf(" 【预期行为:%s，属已知正常情况，不作为异常】", expName)
+		}
 
 		// 当前值 / 阈值（外部告警与本地告警均有，AI 判断严重程度的关键）
 		if in.Value != 0 || in.Threshold != 0 {
@@ -705,6 +751,9 @@ func collectIncidentSummary(max int, alertSourceIDs []uint) []string {
 		return nil
 	}
 
+	// 加载预期行为规则（用于在聚合结论中标注「预期行为」实例）
+	expectations := loadInspectionExpectations()
+
 	// 规则名 / 数据源名映射
 	var rules []database.AlertRule
 	database.DB.Select("id, name").Find(&rules)
@@ -720,11 +769,12 @@ func collectIncidentSummary(max int, alertSourceIDs []uint) []string {
 	}
 
 	type agg struct {
-		name     string
-		severity string
-		count    int
-		clusters map[uint]struct{}
-		lastAt   time.Time
+		name          string
+		severity      string
+		count         int
+		expectedCount int // 命中预期行为规则的实例数
+		clusters      map[uint]struct{}
+		lastAt        time.Time
 	}
 	groups := map[string]*agg{}
 	var order []string
@@ -744,6 +794,9 @@ func collectIncidentSummary(max int, alertSourceIDs []uint) []string {
 			order = append(order, name)
 		}
 		g.count++
+		if matchExpectation(expectations, labels) != "" {
+			g.expectedCount++
+		}
 		if severityRank(in.Severity) > severityRank(g.severity) {
 			g.severity = in.Severity
 		}
@@ -790,7 +843,15 @@ func collectIncidentSummary(max int, alertSourceIDs []uint) []string {
 		if len(clusterNames) > 0 && len(clusterNames) <= 4 {
 			clusterStr = "（" + strings.Join(clusterNames, ", ") + "）"
 		}
-		lines = append(lines, fmt.Sprintf("- [%s] %s：%d 个实例 / %d 个集群%s%s", sev, g.name, g.count, len(g.clusters), clusterStr, stormMark))
+		expectedMark := ""
+		if g.expectedCount > 0 {
+			if g.expectedCount == g.count {
+				expectedMark = " ✅全部为预期行为"
+			} else {
+				expectedMark = fmt.Sprintf(" ✅含%d个预期行为实例", g.expectedCount)
+			}
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] %s：%d 个实例 / %d 个集群%s%s%s", sev, g.name, g.count, len(g.clusters), clusterStr, stormMark, expectedMark))
 	}
 
 	header := fmt.Sprintf("事件聚合降噪（窗口 %d 分钟，风暴阈值 %d 实例）：共 %d 个故障、%d 个活跃实例，其中 %d 个疑似风暴",

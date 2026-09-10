@@ -102,11 +102,15 @@
                   <el-icon><Mute /></el-icon>
                   <span>告警静默</span>
                 </el-menu-item>
-                <el-menu-item index="/alert-inhibits">
-                  <el-icon><Filter /></el-icon>
-                  <span>抑制规则</span>
-                </el-menu-item>
-                <el-menu-item index="/alert-routes">
+<el-menu-item index="/alert-inhibits">
+  <el-icon><Filter /></el-icon>
+  <span>抑制规则</span>
+</el-menu-item>
+<el-menu-item index="/alert-expectations">
+  <el-icon><Aim /></el-icon>
+  <span>预期行为</span>
+</el-menu-item>
+<el-menu-item index="/alert-routes">
                   <el-icon><Share /></el-icon>
                   <span>通知路由</span>
                 </el-menu-item>

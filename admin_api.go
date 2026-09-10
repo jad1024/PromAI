@@ -399,6 +399,8 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/alert/silences/", logged(auth(a.handleAlertSilenceByID)))
 	mux.HandleFunc("/api/promai/alert/inhibits", logged(auth(a.handleAlertInhibits)))
 	mux.HandleFunc("/api/promai/alert/inhibits/", logged(auth(a.handleAlertInhibitByID)))
+	mux.HandleFunc("/api/promai/alert/expectations", logged(auth(a.handleInspectionExpectations)))
+	mux.HandleFunc("/api/promai/alert/expectations/", logged(auth(a.handleInspectionExpectationByID)))
 	mux.HandleFunc("/api/promai/alert/routes", logged(auth(a.handleAlertRoutes)))
 	mux.HandleFunc("/api/promai/alert/routes/", logged(auth(a.handleAlertRouteByID)))
 	mux.HandleFunc("/api/promai/alert/instances", logged(auth(a.handleAlertInstances)))

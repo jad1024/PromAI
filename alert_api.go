@@ -424,6 +424,99 @@ func (a *AdminAPI) handleAlertInhibitByID(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// ===== InspectionExpectation CRUD ================================================
+// 巡检预期行为：按 label matcher 标记「超阈值但属正常」的告警，AI 巡检分析时标注为预期行为（不影响通知/静默）。
+
+func (a *AdminAPI) handleInspectionExpectations(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		page, pageSize := parsePagination(r)
+		var total int64
+		database.DB.Model(&database.InspectionExpectation{}).Count(&total)
+		var rows []database.InspectionExpectation
+		database.DB.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows)
+		writeJSON(w, map[string]interface{}{"items": rows, "total": total})
+	case "POST":
+		var req database.InspectionExpectation
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, 400, "invalid body: "+err.Error())
+			return
+		}
+		if strings.TrimSpace(req.Name) == "" {
+			writeError(w, 400, "name is required")
+			return
+		}
+		if ms, err := alerting.DecodeMatchers(req.MatchersJSON); err != nil {
+			writeError(w, 400, "invalid matchers: "+err.Error())
+			return
+		} else if len(ms) == 0 {
+			writeError(w, 400, "at least one matcher is required")
+			return
+		} else {
+			for i := range ms {
+				if err := ms[i].Validate(); err != nil {
+					writeError(w, 400, err.Error())
+					return
+				}
+			}
+		}
+		if req.MatchersJSON == "" {
+			req.MatchersJSON = "[]"
+		}
+		if u, ok := r.Context().Value("username").(string); ok && req.CreatedBy == "" {
+			req.CreatedBy = u
+		}
+		if err := database.DB.Create(&req).Error; err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, req)
+	default:
+		writeError(w, 405, "method not allowed")
+	}
+}
+
+func (a *AdminAPI) handleInspectionExpectationByID(w http.ResponseWriter, r *http.Request) {
+	id, err := getLastPathID(r.URL.Path)
+	if err != nil {
+		writeError(w, 400, "invalid id")
+		return
+	}
+	switch r.Method {
+	case "GET":
+		var row database.InspectionExpectation
+		if database.DB.First(&row, id).Error != nil {
+			writeError(w, 404, "not found")
+			return
+		}
+		writeJSON(w, row)
+	case "PUT":
+		var req database.InspectionExpectation
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, 400, "invalid body: "+err.Error())
+			return
+		}
+		if strings.TrimSpace(req.Name) == "" {
+			writeError(w, 400, "name is required")
+			return
+		}
+		req.ID = id
+		if err := database.DB.Save(&req).Error; err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, req)
+	case "DELETE":
+		if err := database.DB.Delete(&database.InspectionExpectation{}, id).Error; err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, map[string]interface{}{"deleted": true})
+	default:
+		writeError(w, 405, "method not allowed")
+	}
+}
+
 // ===== AlertRoute CRUD ===========================================================
 
 func (a *AdminAPI) handleAlertRoutes(w http.ResponseWriter, r *http.Request) {
