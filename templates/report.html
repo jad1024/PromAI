@@ -399,6 +399,27 @@
             background: rgba(239, 68, 68, 0.15); color: #ef4444; font-weight: 700;
         }
         #incidents-table th, #incidents-table td { padding: 6px 10px; font-size: 12px; }
+
+        /* ===== 每指标内嵌搜索框 ===== */
+        .metric-title-row {
+            display: flex; align-items: center; gap: 12px;
+            margin: 14px 0 6px; padding-bottom: 4px;
+            border-bottom: 1px dashed var(--border-color, #e2e8f0);
+        }
+        .metric-title-row .metric-title { margin: 0; padding: 0; border: 0; flex: 0 0 auto; }
+        .metric-search {
+            flex: 1 1 auto; max-width: 360px;
+            padding: 4px 10px; font-size: 12px;
+            border: 1px solid var(--border-color, #e2e8f0); border-radius: 4px;
+            background: var(--bg-secondary, #f8fafc); color: var(--text-primary, #0f172a);
+            outline: none;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        .metric-search:focus {
+            border-color: var(--primary, #6366f1);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+        }
+        .metric-search::placeholder { color: var(--text-tertiary, #94a3b8); }
     </style>
 </head>
 <body>
@@ -523,12 +544,19 @@
             <div class="section-content">
                 {{range $metricName := $group.MetricOrder}}
                 {{$metrics := index $group.MetricsByName $metricName}}
-                <div class="metric-title">{{$metricName}}</div>
+                {{$metricKey := printf "%s_%s" $type $metricName}}
+                <div class="metric-title-row">
+                    <span class="metric-title">{{$metricName}}</span>
+                    {{if gt (len $metrics) 0}}
+                    <input type="search" class="metric-search" data-metric="{{$metricKey}}"
+                        placeholder="搜索该指标行（指标名/维度/值/状态）…" autocomplete="off" />
+                    {{end}}
+                </div>
                 {{if eq (len $metrics) 0 }}
                 <p class="no-data-message">未查询到数据</p>
                 {{end}}
                 {{if gt (len $metrics) 0}}
-                <table>
+                <table data-metric-table="{{$metricKey}}">
                     <thead>
                     <tr>
                         <th>指标名称</th>
@@ -947,6 +975,38 @@
             return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
         });
     }
+
+    // ---------- 每指标内嵌关键字搜索 ----------
+    (function bindMetricSearch() {
+        // 先按 data-metric-table 建索引：指标名可能含引号/空格/方括号，
+        // 直接拼 CSS 属性选择器会解析失败，用 getAttribute + map 查找更安全。
+        var tableByKey = {};
+        document.querySelectorAll('table[data-metric-table]').forEach(function (t) {
+            tableByKey[t.getAttribute('data-metric-table')] = t;
+        });
+
+        document.querySelectorAll('.metric-search').forEach(function (input) {
+            var table = tableByKey[input.getAttribute('data-metric')];
+            if (!table) return;
+            var tbody = table.querySelector('tbody');
+
+            function applyFilter() {
+                var kw = (input.value || '').trim().toLowerCase();
+                // 每次实时取行，避免与其它脚本重绘表格后拿到失效节点
+                tbody.querySelectorAll('tr').forEach(function (row) {
+                    if (!kw) { row.style.display = ''; return; }
+                    // 行内全部可见文本（指标名/维度值/阈值/状态徽章等）参与匹配
+                    row.style.display = row.textContent.toLowerCase().indexOf(kw) >= 0 ? '' : 'none';
+                });
+            }
+
+            input.addEventListener('input', applyFilter);
+            // Esc 清空当前指标的关键字
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') { input.value = ''; applyFilter(); }
+            });
+        });
+    })();
 </script>
 </body>
 </html>
