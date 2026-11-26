@@ -8,25 +8,34 @@
     <div class="section-card">
       <div class="section-header">
         <h3><el-icon :size="16" :color="getCssVar('--cyan')"><List /></el-icon> 历史报告</h3>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <el-input v-model="keyword" placeholder="搜索标题/数据源/模版/任务ID" clearable style="width: 240px;" @keyup.enter="fetchData" @clear="fetchData" />
-          <el-select v-model="statusFilter" placeholder="状态" clearable style="width: 110px;" @change="fetchData">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <el-input v-model="keyword" placeholder="搜索标题/数据源/模版/任务ID" clearable style="width: 220px;" @keyup.enter="fetchData" @clear="fetchData" />
+          <el-select v-model="statusFilter" placeholder="状态" clearable style="width: 100px;" @change="fetchData">
             <el-option label="正常" value="success" />
             <el-option label="告警" value="warning" />
             <el-option label="高危" value="danger" />
           </el-select>
-          <el-select v-model="triggerFilter" placeholder="触发类型" clearable style="width: 130px;" @change="fetchData">
+          <el-select v-model="triggerFilter" placeholder="触发类型" clearable style="width: 120px;" @change="fetchData">
             <el-option label="手动" value="manual" />
             <el-option label="定时" value="cron" />
             <el-option label="手动+AI" value="manual_ai" />
             <el-option label="定时+AI" value="cron_ai" />
           </el-select>
           <el-button plain @click="fetchData" :loading="loading"><el-icon><Refresh /></el-icon> 刷新</el-button>
+          <el-button plain type="danger" @click="openCleanup"><el-icon><Delete /></el-icon> 清理/保留</el-button>
         </div>
       </div>
+      <div v-if="selection.length > 0" class="batch-bar">
+        <span>已选 <b>{{ selection.length }}</b> 条</span>
+        <el-button size="small" type="danger" plain :loading="batchDeleting" @click="batchDeleteSelected">
+          <el-icon><Delete /></el-icon> 批量删除
+        </el-button>
+        <el-button size="small" text @click="selection = []">取消选择</el-button>
+      </div>
       <el-table :data="reports" v-loading="loading" stripe row-class-name="clickable-row"
-        @row-click="onRowClick">
-        <el-table-column type="index" label="#" width="56" />
+        @row-click="onRowClick" @selection-change="onSelectionChange">
+        <el-table-column type="selection" width="46" @click.stop />
+        <el-table-column type="index" label="#" width="52" />
         <el-table-column prop="title" label="报告名称" min-width="220">
           <template #default="{ row }">
             <span style="font-weight: 600; color: var(--text-primary);">{{ row.title }}</span>
@@ -106,6 +115,26 @@
       </div>
       <el-empty v-if="!loading && reports.length === 0" description="暂无报告" :image-size="60" />
     </div>
+
+    <!-- 清理 / 保留策略 -->
+    <el-dialog v-model="cleanupOpen" title="清理历史报告" width="520px" :close-on-click-modal="false">
+      <div class="cleanup-body">
+        <p class="cleanup-tip">当前共 {{ total }} 条报告。请选择清理方式，操作不可恢复。</p>
+        <el-radio-group v-model="cleanupMode">
+          <el-radio value="keep">
+            只保留最近 <el-input-number v-model="keepRecent" :min="0" :max="100000" size="small" style="width:110px;margin:0 4px;" /> 条
+            <span class="cleanup-sub">（删除更早的全部，含报告文件）</span>
+          </el-radio>
+          <el-radio value="days" style="margin-top:12px;">
+            删除 <el-input-number v-model="olderDays" :min="1" :max="3650" size="small" style="width:100px;margin:0 4px;" /> 天前的报告
+          </el-radio>
+        </el-radio-group>
+      </div>
+      <template #footer>
+        <el-button @click="cleanupOpen = false">取消</el-button>
+        <el-button type="danger" :loading="cleanupBusy" @click="doCleanup">确认清理</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -114,7 +143,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getReports, deleteReport, openReportFile } from '../api'
+import { getReports, deleteReport, openReportFile, batchDeleteReports } from '../api'
 import type { ReportRecord } from '../types'
 
 function getCssVar(name: string): string {
@@ -131,6 +160,60 @@ const total = ref(0)
 const keyword = ref('')
 const statusFilter = ref('')
 const triggerFilter = ref<'' | 'manual' | 'cron' | 'manual_ai' | 'cron_ai'>('')
+
+// 批量删除 / 保留清理
+const selection = ref<ReportRecord[]>([])
+const batchDeleting = ref(false)
+const cleanupOpen = ref(false)
+const cleanupBusy = ref(false)
+const cleanupMode = ref<'keep' | 'days'>('keep')
+const keepRecent = ref(50)
+const olderDays = ref(30)
+
+function onSelectionChange(rows: ReportRecord[]) { selection.value = rows }
+
+async function batchDeleteSelected() {
+  const ids = selection.value.map(r => r.id!).filter(Boolean)
+  if (!ids.length) return
+  try {
+    await ElMessageBox.confirm(`确定批量删除选中的 ${ids.length} 条报告？报告文件会一并删除，不可恢复。`, '批量删除', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
+    })
+  } catch { return }
+  batchDeleting.value = true
+  try {
+    const res = await batchDeleteReports({ ids, confirm: true })
+    ElMessage.success(`已删除 ${res.data.deleted} 条报告`)
+    selection.value = []
+    await fetchData()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.error || e.message) }
+  finally { batchDeleting.value = false }
+}
+
+function openCleanup() { cleanupOpen.value = true }
+
+async function doCleanup() {
+  const payload = cleanupMode.value === 'keep'
+    ? { keep_recent: keepRecent.value, confirm: true }
+    : { older_than_days: olderDays.value, confirm: true }
+  const desc = cleanupMode.value === 'keep'
+    ? `只保留最近 ${keepRecent.value} 条，其余全部删除`
+    : `删除 ${olderDays.value} 天前的所有报告`
+  try {
+    await ElMessageBox.confirm(`${desc}。此操作不可恢复，确认继续？`, '清理确认', {
+      type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消',
+    })
+  } catch { return }
+  cleanupBusy.value = true
+  try {
+    const res = await batchDeleteReports(payload)
+    ElMessage.success(`已清理 ${res.data.deleted} 条报告`)
+    cleanupOpen.value = false
+    selection.value = []
+    await fetchData()
+  } catch (e: any) { ElMessage.error(e?.response?.data?.error || e.message) }
+  finally { cleanupBusy.value = false }
+}
 
 function triggerLabel(t?: ReportRecord['trigger_type']): string {
   switch (t) {
@@ -199,4 +282,15 @@ onMounted(fetchData)
   font-size: 12px;
 }
 .link-cyan:hover { text-decoration: underline; }
+.batch-bar {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 24px 12px; padding: 8px 14px;
+  background: var(--el-color-primary-light-9, #eef2ff);
+  border: 1px solid var(--el-color-primary-light-5, #c7d2fe);
+  border-radius: 6px; font-size: 13px;
+}
+.batch-bar b { color: var(--el-color-primary, #6366f1); }
+.cleanup-body { padding: 4px 0; }
+.cleanup-tip { margin: 0 0 14px; font-size: 13px; color: var(--text-secondary, #64748b); }
+.cleanup-sub { font-size: 12px; color: var(--text-tertiary, #94a3b8); }
 </style>

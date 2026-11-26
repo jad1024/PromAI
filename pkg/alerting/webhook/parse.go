@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // AlertEvent 外部告警统一事件结构
@@ -193,12 +194,29 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 		return []AlertEvent{ev}, nil
 	}
 
-	// notification：message 字段是字符串，内含告警 JSON
+	// notification：兼容三种投递形态
+	//   1) SMN 标准：{"type":"notification","message":"<告警JSON字符串>"}
+	//   2) message 直接是对象：{"type":"notification","message":{...}}
+	//   3) 直接把告警对象作为 body（无外层包装，华为云自定义模板常见）
 	msgStr := firstStr(raw, "message", "Message")
 	var alarmRaw map[string]interface{}
-	if err := json.Unmarshal([]byte(msgStr), &alarmRaw); err != nil {
-		// message 不是 JSON 时退化为纯文本注解
-		alarmRaw = map[string]interface{}{"message": msgStr}
+	switch {
+	case msgStr != "":
+		if err := json.Unmarshal([]byte(msgStr), &alarmRaw); err != nil {
+			// message 不是 JSON 时退化为纯文本注解
+			alarmRaw = map[string]interface{}{"message": msgStr}
+		}
+	case raw["message"] != nil:
+		if m, ok := raw["message"].(map[string]interface{}); ok {
+			alarmRaw = m
+		} else {
+			alarmRaw = raw
+		}
+	default:
+		alarmRaw = raw
+	}
+	if alarmRaw == nil {
+		alarmRaw = map[string]interface{}{}
 	}
 
 	// 兼容新版 v1：顶层 {version:"v1", data:{...}}，把 data 里的字段扁平合并到 alarmRaw
@@ -216,9 +234,34 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 		}
 	}
 
+	// 关键兼容：华为云 CES 新版消息模板把完整告警字段放在 raw_data 这个
+	// 「内嵌 JSON 字符串」里，字段名为驼峰（PrivateIp / ResourceName / ResourceId /
+	// AlarmRuleName / Namespace / IsAlarm ...），外层只有 snake_case 聚合字段
+	// （current_data / value / unit ...）。不展开它，labels 会全空，导致告警聚合
+	// 显示「0 实例」、规则名为空、级别识别失效。
+	for _, rk := range []string{"raw_data", "RawData", "_raw_data"} {
+		s := firstStr(alarmRaw, rk)
+		if s == "" {
+			continue
+		}
+		var inner map[string]interface{}
+		if json.Unmarshal([]byte(s), &inner) == nil && len(inner) > 0 {
+			for k, v := range inner {
+				if _, exists := alarmRaw[k]; !exists {
+					alarmRaw[k] = v
+				}
+			}
+		}
+		// 原始串留档到 annotations，便于详情抽屉查看完整 CES 原始信息
+		if firstStr(alarmRaw, "_raw_data") == "" {
+			alarmRaw["_raw_data"] = s
+		}
+		break
+	}
+
 	ev := AlertEvent{
 		SourceType:  "huaweicloud",
-		ExternalID:  firstStr(alarmRaw, "alarm_record_id", "AlarmRecordID", "alarm_id", "alarmID") + "|" + firstStr(alarmRaw, "resource_id", "ResourceID", "instance_id"),
+		ExternalID:  huaweiGet(alarmRaw, "alarm_record_id", "AlarmRecordID", "alarm_id", "alarmID") + "|" + huaweiGet(alarmRaw, "resource_id", "ResourceID", "ResourceId", "instance_id"),
 		State:       "firing",
 		Labels:      map[string]string{},
 		Annotations: map[string]string{},
@@ -226,14 +269,14 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 	}
 
 	// 规则名：新版 AlarmRuleName / 旧版 alarm_name / alarmName；再 fallback 到 Namespace-MetricName
-	ruleName := firstStr(alarmRaw, "alarm_rule_name", "AlarmRuleName", "alarm_name", "alarmName", "metric_name", "MetricName")
+	ruleName := huaweiGet(alarmRaw, "alarm_rule_name", "AlarmRuleName", "alarm_name", "alarmName", "metric_name", "MetricName")
 	if ruleName == "" {
-		ruleName = strings.TrimSpace(firstStr(alarmRaw, "namespace", "Namespace") + " " + firstStr(alarmRaw, "metric_name", "MetricName"))
+		ruleName = strings.TrimSpace(huaweiGet(alarmRaw, "namespace", "Namespace") + " " + huaweiGet(alarmRaw, "metric_name", "MetricName"))
 	}
 	ev.RuleName = ruleName
 
 	// 华为云状态：新版 IsAlarm (bool) / 旧版 alarm_status: alarm|OK|insufficient_data
-	if isAlarm := firstAny(alarmRaw, "is_alarm", "IsAlarm"); isAlarm != nil {
+	if isAlarm := huaweiAny(alarmRaw, "is_alarm", "IsAlarm"); isAlarm != nil {
 		switch t := isAlarm.(type) {
 		case bool:
 			if !t {
@@ -249,7 +292,7 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 			}
 		}
 	} else {
-		switch strings.ToLower(firstStr(alarmRaw, "alarm_status", "alarmStatus", "status")) {
+		switch strings.ToLower(huaweiGet(alarmRaw, "alarm_status", "alarmStatus", "status")) {
 		case "ok", "resolved", "recovered":
 			ev.State = "resolved"
 		case "insufficient_data", "insufficient":
@@ -258,23 +301,36 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 	}
 
 	// 级别：新版 AlarmLevel 中文/英文 / 旧版 alarm_level 数值或中文
-	ev.Severity = parseSeverity(firstAny(alarmRaw, "alarm_level", "AlarmLevel", "alarmLevel", "level"))
+	ev.Severity = parseSeverity(huaweiAny(alarmRaw, "alarm_level", "AlarmLevel", "alarmLevel", "level"))
 
 	// Labels：保留小写 snake_case key，统一内部命名
 	labelMap := map[string]string{
-		"namespace":       firstStr(alarmRaw, "namespace", "Namespace"),
-		"metric":          firstStr(alarmRaw, "metric_name", "MetricName"),
-		"resource_name":   firstStr(alarmRaw, "resource_name", "ResourceName"),
-		"resource_id":     firstStr(alarmRaw, "resource_id", "ResourceID"),
-		"region":          firstStr(alarmRaw, "region", "Region"),
-		"region_id":       firstStr(alarmRaw, "region_id", "RegionId"),
-		"private_ip":      firstStr(alarmRaw, "private_ip", "PrivateIP", "private_ipv6", "PrivateIPV6"),
-		"public_ip":       firstStr(alarmRaw, "public_ip", "PublicIP"),
-		"alarm_rule_name": firstStr(alarmRaw, "alarm_rule_name", "AlarmRuleName"),
+		"namespace":       huaweiGet(alarmRaw, "namespace", "Namespace"),
+		"metric":          huaweiGet(alarmRaw, "metric_name", "MetricName"),
+		"resource_name":   huaweiGet(alarmRaw, "resource_name", "ResourceName"),
+		"resource_id":     huaweiGet(alarmRaw, "resource_id", "ResourceID", "ResourceId"),
+		"region":          huaweiGet(alarmRaw, "region", "Region"),
+		"region_id":       huaweiGet(alarmRaw, "region_id", "RegionId", "RegionID"),
+		"private_ip":      huaweiGet(alarmRaw, "private_ip", "PrivateIP", "PrivateIp", "private_ipv6", "PrivateIPV6"),
+		"public_ip":       huaweiGet(alarmRaw, "public_ip", "PublicIP", "PublicIp"),
+		"alarm_rule_name": huaweiGet(alarmRaw, "alarm_rule_name", "AlarmRuleName"),
 	}
 	for k, v := range labelMap {
 		if v != "" {
 			ev.Labels[k] = v
+		}
+	}
+
+	// 生成标准 instance 标签。华为云没有 instance 字段，而聚合层 extractInstance
+	// 与指纹计算都依赖它区分实例；不补这条标签，同一规则下不同实例的告警会
+	// 被折叠成同一个 fingerprint，且故障聚合恒显示「0 实例」。
+	// 优先级：private_ip > resource_name > resource_id > public_ip。
+	if ev.Labels["instance"] == "" {
+		for _, k := range []string{"private_ip", "resource_name", "resource_id", "public_ip"} {
+			if v := ev.Labels[k]; v != "" {
+				ev.Labels["instance"] = v
+				break
+			}
 		}
 	}
 
@@ -284,7 +340,7 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 		"alarm_content", "alarmContent", "content",
 		"summary", "message",
 	}
-	if summary := firstStr(alarmRaw, annoKeys...); summary != "" {
+	if summary := huaweiGet(alarmRaw, annoKeys...); summary != "" {
 		ev.Annotations["summary"] = summary
 	}
 	for _, pair := range []struct{ k, label string }{
@@ -300,7 +356,7 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 		{"account_name", "AccountName"},
 		{"ep_name", "EPName"},
 	} {
-		if v := firstStr(alarmRaw, pair.k, pair.label); v != "" {
+		if v := huaweiGet(alarmRaw, pair.k, pair.label); v != "" {
 			ev.Annotations[pair.k] = v
 		}
 	}
@@ -310,19 +366,19 @@ func ParseHuaweiCloud(body []byte) ([]AlertEvent, error) {
 
 	// Value / Threshold
 	// 新版：CurrentData = "100.00 %" 是当前值；Value = "0%" 是阈值
-	if v := parsePercentOrNumber(firstStr(alarmRaw, "current_data", "CurrentData")); v != 0 {
+	if v := parsePercentOrNumber(huaweiGet(alarmRaw, "current_data", "CurrentData")); v != 0 {
 		ev.Value = v
 	} else {
-		ev.Value = firstFloat(alarmRaw, "value", "Value", "current_value", "metric_value")
+		ev.Value = huaweiFloat(alarmRaw, "value", "Value", "current_value", "metric_value")
 	}
-	if v := parsePercentOrNumber(firstStr(alarmRaw, "value", "Value")); v != 0 {
+	if v := parsePercentOrNumber(huaweiGet(alarmRaw, "value", "Value")); v != 0 {
 		ev.Threshold = v
 	} else {
-		ev.Threshold = firstFloat(alarmRaw, "threshold", "trigger_threshold", "alert_threshold")
+		ev.Threshold = huaweiFloat(alarmRaw, "threshold", "trigger_threshold", "alert_threshold")
 	}
 
 	// 触发时间
-	if s := firstStr(alarmRaw, "alarm_time", "AlarmTime", "trigger_time", "triggerTime", "occur_time"); s != "" {
+	if s := huaweiGet(alarmRaw, "alarm_time", "AlarmTime", "trigger_time", "triggerTime", "occur_time"); s != "" {
 		if t, err := parseFlexibleTime(s); err == nil {
 			ev.OccurredAt = t
 		}
@@ -344,6 +400,83 @@ func parsePercentOrNumber(s string) float64 {
 	s = strings.ReplaceAll(s, ",", "")
 	if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
 		return f
+	}
+	return 0
+}
+
+// huaweiNormKey 把字段名归一化：小写 + 去掉下划线/连字符/空格。
+// 华为云不同模板对同一字段写法不一，归一化后可统一取值：
+//
+//	private_ip / PrivateIp / PrivateIP / Private_IP -> "privateip"
+//	resource_id / ResourceId / ResourceID          -> "resourceid"
+//	region_id   / RegionId   / RegionID            -> "regionid"
+func huaweiNormKey(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == '_' || r == '-' || r == ' ' {
+			continue
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
+}
+
+// huaweiNormalized 返回一份「key 归一化」的副本。多个源 key 归一化后冲突时，
+// 按 key 字典序取第一个，保证结果确定；调用方仍先做精确匹配，故精确写法优先。
+func huaweiNormalized(m map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(m))
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		nk := huaweiNormKey(k)
+		if _, exists := out[nk]; !exists {
+			out[nk] = m[k]
+		}
+	}
+	return out
+}
+
+// huaweiGet 归一化取字符串：先按候选键精确匹配，再按归一化键匹配。
+func huaweiGet(m map[string]interface{}, candidates ...string) string {
+	if s := firstStr(m, candidates...); s != "" {
+		return s
+	}
+	nm := huaweiNormalized(m)
+	for _, c := range candidates {
+		if s := firstStr(nm, huaweiNormKey(c)); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// huaweiAny 归一化取原始值（保留 bool / 数值，供状态、级别解析用）。
+func huaweiAny(m map[string]interface{}, candidates ...string) interface{} {
+	if v := firstAny(m, candidates...); v != nil {
+		return v
+	}
+	nm := huaweiNormalized(m)
+	for _, c := range candidates {
+		if v := firstAny(nm, huaweiNormKey(c)); v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// huaweiFloat 归一化取浮点值。
+func huaweiFloat(m map[string]interface{}, candidates ...string) float64 {
+	if f := firstFloat(m, candidates...); f != 0 {
+		return f
+	}
+	nm := huaweiNormalized(m)
+	for _, c := range candidates {
+		if f := firstFloat(nm, huaweiNormKey(c)); f != 0 {
+			return f
+		}
 	}
 	return 0
 }

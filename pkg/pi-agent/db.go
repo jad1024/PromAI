@@ -12,6 +12,10 @@ func (w *gormDBWrapper) Model(value any) DB {
 	return &gormDBWrapper{db: w.db.Model(value)}
 }
 
+func (w *gormDBWrapper) Select(query any, args ...any) DB {
+	return &gormDBWrapper{db: w.db.Select(query, args...)}
+}
+
 func (w *gormDBWrapper) Where(query any, args ...any) DB {
 	return &gormDBWrapper{db: w.db.Where(query, args...)}
 }

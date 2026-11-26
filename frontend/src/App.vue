@@ -1,532 +1,239 @@
 <template>
-  <template v-if="showLayout">
-    <div class="app-shell">
-      <div class="bg-grid"></div>
-      <el-container class="app-layout">
-        <el-aside :width="sidebarWidth" class="app-sidebar">
-          <div class="sidebar-header">
-            <div class="logo">
-              <div class="logo-icon">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                  <rect width="32" height="32" rx="8" fill="url(#logo-grad)"/>
-                  <path d="M16 8c-4.4 0-8 3.6-8 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm0 14c-3.3 0-6-2.7-6-6s2.7-6 6-6 6 2.7 6 6-2.7 6-6 6z" fill="white" opacity="0.9"/>
-                  <path d="M16 12l-2.5 4h5L16 12z" fill="white"/>
-                  <defs>
-                    <linearGradient id="logo-grad" x1="0" y1="0" x2="32" y2="32">
-                      <stop offset="0%" stop-color="#00d4ff"/>
-                      <stop offset="100%" stop-color="#7c3aed"/>
-                    </linearGradient>
-                  </defs>
-                </svg>
-              </div>
-              <div class="logo-text-group" v-show="!collapsed">
-                <span class="logo-text">{{ platformName }}</span>
-                <span class="logo-sub">{{ platformSubtitle }}</span>
-              </div>
-            </div>
-            <el-button text class="collapse-btn" @click="toggleCollapse">
-              <el-icon :size="18" class="collapse-icon">
-                <Fold v-if="!collapsed" /><Expand v-else />
-              </el-icon>
-            </el-button>
+  <el-config-provider :locale="zhCn">
+  <div v-if="showLayout" class="fc-app">
+    <!-- 侧栏：v4 白色 196px + 分组导航 -->
+    <aside class="fc-side">
+      <div class="fc-brand">
+        <div class="fc-logo">P</div>
+        <h1>PromAI</h1>
+      </div>
+      <nav class="fc-nav">
+        <a :class="{ on: isActive('/dashboard') }" @click="go('/dashboard')"><span class="ic">⌂</span>首页</a>
+        <a class="fc-static"><span class="ic">⇢</span>快捷跳转<span class="caret">›</span></a>
+        <a class="fc-static"><span class="ic">⇄</span>空间切换<span class="caret">›</span></a>
+
+        <div class="fc-grp">观测</div>
+        <a :class="{ on: isActive('/pipeline') }" @click="go('/pipeline')"><span class="ic">⇢</span>告警驱动巡检<span class="caret">›</span></a>
+        <!-- FEATURE_FLAG: 北极星 / 灭火图暂不开放（未达 Flashcat 效果），恢复时把 SHOW_FIREMAP_SCENE 改为 true -->
+        <template v-if="SHOW_FIREMAP_SCENE">
+          <a :class="{ on: isActive('/polaris') }" @click="go('/polaris')"><span class="ic">★</span>北极星<span class="caret">›</span></a>
+          <a :class="{ on: route.path.startsWith('/firemap') }" @click="toggle('firemap')"><span class="ic">◉</span>灭火图<span class="caret">⌄</span></a>
+          <div class="fc-sub" v-show="open.firemap">
+            <a :class="{ on: firemapTab === '' }" @click="go('/firemap')">首页</a>
+            <a :class="{ on: firemapTab === 'pool' }" @click="go('/firemap?view=pool')">卡片池</a>
+            <a :class="{ on: firemapTab === 'status' }" @click="go('/firemap?view=status')">状态总览</a>
+            <a :class="{ on: firemapTab === 'slo' }" @click="go('/firemap?view=slo')">SLO报表</a>
           </div>
+        </template>
+        <a :class="{ on: isActive('/eventwall') }" @click="go('/eventwall')"><span class="ic">▤</span>事件墙<span class="caret">›</span></a>
+        <a :class="{ on: isActive('/bi') }" @click="go('/bi')"><span class="ic">◍</span>健康大屏</a>
 
-          <div class="sidebar-nav">
-            <el-menu
-              :default-active="currentRoute"
-              :collapse="collapsed"
-              :collapse-transition="false"
-              background-color="transparent"
-              router
-            >
-              <el-menu-item index="/dashboard">
-                <el-icon><Odometer /></el-icon>
-                <span>控制台</span>
-              </el-menu-item>
-              <el-menu-item index="/bi">
-                <el-icon><DataAnalysis /></el-icon>
-                <span>健康大屏</span>
-              </el-menu-item>
-              <el-menu-item index="/datasources">
-                <el-icon><Connection /></el-icon>
-                <template #title>
-                  <span style="flex:1;">数据源管理</span>
-                  <el-tooltip content="此页面支持一键触发巡检" placement="right">
-                    <el-badge value="巡检" class="inspect-badge" />
-                  </el-tooltip>
-                </template>
-              </el-menu-item>
-              <el-menu-item index="/notifications">
-                <el-icon><Bell /></el-icon>
-                <span>通知渠道</span>
-              </el-menu-item>
-              <el-menu-item index="/cronjobs">
-                <el-icon><Clock /></el-icon>
-                <span>定时任务</span>
-              </el-menu-item>
-              <el-menu-item index="/reports">
-                <el-icon><Document /></el-icon>
-                <span>报告管理</span>
-              </el-menu-item>
-              <el-sub-menu index="metrics-group">
-                <template #title>
-                  <el-icon><TrendCharts /></el-icon>
-                  <span>指标配置</span>
-                </template>
-                <el-menu-item index="/metrics">
-                  <el-icon><List /></el-icon>
-                  <span>指标列表</span>
-                </el-menu-item>
-                <el-menu-item index="/templates">
-                  <el-icon><Collection /></el-icon>
-                  <span>巡检模板</span>
-                </el-menu-item>
-              </el-sub-menu>
-              <el-sub-menu index="alert-group">
-                <template #title>
-                  <el-icon><Warning /></el-icon>
-                  <span>告警管理</span>
-                </template>
-                <el-menu-item index="/alerts">
-                  <el-icon><Warning /></el-icon>
-                  <template #title>
-                    <span style="flex:1;">实时告警</span>
-                    <el-badge :value="alertUnreadCount" :hidden="alertUnreadCount===0" class="alert-badge" />
-                  </template>
-                </el-menu-item>
-                <el-menu-item index="/alert-rules">
-                  <el-icon><AlarmClock /></el-icon>
-                  <span>告警规则</span>
-                </el-menu-item>
-                <el-menu-item index="/alert-silences">
-                  <el-icon><Mute /></el-icon>
-                  <span>告警静默</span>
-                </el-menu-item>
-<el-menu-item index="/alert-inhibits">
-  <el-icon><Filter /></el-icon>
-  <span>抑制规则</span>
-</el-menu-item>
-<el-menu-item index="/alert-expectations">
-  <el-icon><Aim /></el-icon>
-  <span>预期行为</span>
-</el-menu-item>
-<el-menu-item index="/alert-routes">
-                  <el-icon><Share /></el-icon>
-                  <span>通知路由</span>
-                </el-menu-item>
-                <el-menu-item index="/alert-sources">
-                  <el-icon><Link /></el-icon>
-                  <span>告警源管理</span>
-                </el-menu-item>
-                <el-menu-item index="/alert-history">
-                  <el-icon><Histogram /></el-icon>
-                  <span>告警历史</span>
-                </el-menu-item>
-                <el-menu-item index="/alert-events">
-                  <el-icon><Files /></el-icon>
-                  <span>事件聚合</span>
-                </el-menu-item>
-              </el-sub-menu>
-              <el-menu-item index="/ai">
-                <el-icon><MagicStick /></el-icon>
-                <span>AI 助手</span>
-              </el-menu-item>
-              <el-menu-item index="/skills">
-                <el-icon><Tools /></el-icon>
-                <span>Skill 管理</span>
-              </el-menu-item>
-              <el-menu-item index="/settings">
-                <el-icon><Setting /></el-icon>
-                <span>系统设置</span>
-              </el-menu-item>
-            <el-menu-item index="/inspection">
-              <el-icon><Monitor /></el-icon>
-              <template #title>触发巡检</template>
-            </el-menu-item>
-            <el-menu-item index="/inspect-records">
-              <el-icon><List /></el-icon>
-              <span>巡检记录</span>
-            </el-menu-item>
-            <el-menu-item index="/portscan">
-              <el-icon><Aim /></el-icon>
-              <span>敏感端口检测</span>
-            </el-menu-item>
-            <el-menu-item index="/user-manual">
-              <el-icon><Reading /></el-icon>
-              <span>使用手册</span>
-            </el-menu-item>
-          </el-menu>
-          </div>
+        <div class="fc-grp">分析</div>
+        <a :class="{ on: isActive('/metrics') }" @click="go('/metrics')"><span class="ic">∿</span>指标分析<span class="caret">›</span></a>
+        <a :class="{ on: isActive('/log-analysis') }" @click="go('/log-analysis')"><span class="ic">☰</span>日志分析<span class="caret">›</span></a>
+        <a :class="{ on: isActive('/trace-analysis') }" @click="go('/trace-analysis')"><span class="ic">⑂</span>链路分析<span class="caret">›</span></a>
 
-          <div class="sidebar-footer" v-show="!collapsed">
-            <div class="status-dot"></div>
-            <span>系统运行中</span>
-          </div>
-        </el-aside>
+        <div class="fc-grp">平台</div>
+        <a :class="{ on: isActive('/dashboard') }" @click="go('/dashboard')"><span class="ic">▦</span>仪表盘<span class="caret">›</span></a>
+        <a :class="{ on: open.alert }" @click="toggle('alert')"><span class="ic">⚑</span>告警管理<span class="caret">{{ open.alert ? '⌄' : '›' }}</span></a>
+        <div class="fc-sub" v-show="open.alert">
+          <a :class="{ on: isActive('/alerts') }" @click="go('/alerts')">实时告警</a>
+          <a :class="{ on: isActive('/alert-rules') }" @click="go('/alert-rules')">告警规则</a>
+          <a :class="{ on: isActive('/alert-silences') }" @click="go('/alert-silences')">告警静默</a>
+          <a :class="{ on: isActive('/alert-inhibits') }" @click="go('/alert-inhibits')">抑制规则</a>
+          <a :class="{ on: isActive('/alert-expectations') }" @click="go('/alert-expectations')">预期行为</a>
+          <a :class="{ on: isActive('/alert-routes') }" @click="go('/alert-routes')">通知路由</a>
+          <a :class="{ on: isActive('/alert-sources') }" @click="go('/alert-sources')">告警源管理</a>
+          <a :class="{ on: isActive('/alert-history') }" @click="go('/alert-history')">告警历史</a>
+          <a :class="{ on: isActive('/alert-events') }" @click="go('/alert-events')">事件聚合</a>
+        </div>
+        <a :class="{ on: open.tool }" @click="toggle('tool')"><span class="ic">⚙</span>监控工具<span class="caret">{{ open.tool ? '⌄' : '›' }}</span></a>
+        <div class="fc-sub" v-show="open.tool">
+          <a :class="{ on: isActive('/datasources') }" @click="go('/datasources')">数据源管理</a>
+          <a :class="{ on: isActive('/notifications') }" @click="go('/notifications')">通知渠道</a>
+          <a :class="{ on: isActive('/cronjobs') }" @click="go('/cronjobs')">定时任务</a>
+          <a :class="{ on: isActive('/reports') }" @click="go('/reports')">报告管理</a>
+          <a :class="{ on: isActive('/templates') }" @click="go('/templates')">巡检模板</a>
+          <a :class="{ on: isActive('/inspection') }" @click="go('/inspection')">触发巡检</a>
+          <a :class="{ on: isActive('/inspect-records') }" @click="go('/inspect-records')">巡检记录</a>
+          <a :class="{ on: isActive('/skills') }" @click="go('/skills')">Skill 管理</a>
+          <a :class="{ on: isActive('/ai') }" @click="go('/ai')">AI 助手</a>
+          <a :class="{ on: isActive('/portscan') }" @click="go('/portscan')">敏感端口检测</a>
+        </div>
+        <a :class="{ on: open.k8s }" @click="toggle('k8s')"><span class="ic">⎈</span>容器平台<span class="caret">{{ open.k8s ? '⌄' : '›' }}</span></a>
+        <div class="fc-sub" v-show="open.k8s">
+          <a :class="{ on: isActive('/user-manual') }" @click="go('/user-manual')">使用手册</a>
+          <a :class="{ on: isActive('/settings') }" @click="go('/settings')">系统设置</a>
+        </div>
+      </nav>
+      <div class="fc-side-ft">
+        <span class="fc-avatar-sm">AD</span>
+        <span>{{ username }}</span>
+        <span class="fc-ft-sub">PromAI 内核</span>
+      </div>
+    </aside>
 
-        <el-container>
-          <el-header class="app-header">
-            <div class="header-left">
-              <el-breadcrumb separator="/">
-                <el-breadcrumb-item :to="{ path: '/dashboard' }">{{ platformName }}</el-breadcrumb-item>
-                <el-breadcrumb-item v-if="currentMeta?.title">{{ currentMeta.title }}</el-breadcrumb-item>
-              </el-breadcrumb>
-            </div>
-            <div class="header-right">
-              <el-dropdown trigger="click" @command="handleThemeChange">
-                <el-button text class="header-btn">
-                  <el-icon :size="18"><Brush /></el-icon>
-                  <span style="margin-left: 4px; font-size: 13px;">主题</span>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item v-for="t in themeOptions" :key="t.value" :command="t.value" :class="{ active: currentTheme === t.value }">
-                      <span style="margin-right: 8px;">{{ t.icon }}</span>
-                      <span>{{ t.label }}</span>
-                      <el-icon v-if="currentTheme === t.value" style="margin-left: auto; color: var(--cyan);"><Check /></el-icon>
-                    </el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-              <div class="header-user">
-                <el-icon><User /></el-icon>
-                <span class="user-name">{{ username }}</span>
-              </div>
-              <el-button text class="header-btn" @click="handleLogout">
-                <el-icon><SwitchButton /></el-icon>
-                <span style="margin-left: 4px; font-size: 13px;">退出</span>
-              </el-button>
-            </div>
-          </el-header>
-
-          <el-main class="app-main">
-            <router-view v-slot="{ Component }">
-              <transition name="page-fade" mode="out-in">
-                <component :is="Component" />
-              </transition>
-            </router-view>
-          </el-main>
-        </el-container>
-      </el-container>
+    <!-- 主区：50px 顶栏 + 内容 -->
+    <div class="fc-main">
+      <header class="fc-top">
+        <span class="fc-top-title">{{ currentTitle }}</span>
+        <span class="fc-space">◈ 默认空间 ⌄</span>
+        <span v-if="SHOW_FIREMAP_SCENE" class="fc-what">? 什么是灭火图</span>
+        <span class="fc-spacer"></span>
+        <button class="fc-ai-btn" @click="go('/ai')">✦ PromAI</button>
+        <a class="fc-top-link" @click="go('/user-manual')">创建引导</a>
+        <a class="fc-top-link" @click="go('/user-manual')">产品文档</a>
+        <el-dropdown trigger="click" @command="handleThemeChange">
+          <span class="fc-avatar">AD</span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="t in themeOptions" :key="t.value" :command="t.value">
+                {{ t.icon }} {{ t.label }}
+              </el-dropdown-item>
+              <el-dropdown-item command="__logout__" divided>退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </header>
+      <main class="fc-content">
+        <router-view v-slot="{ Component }">
+          <transition name="fc-fade" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
+      </main>
     </div>
-  </template>
-  <template v-else>
-    <router-view />
-  </template>
+  </div>
+  <router-view v-else />
+  </el-config-provider>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useTheme } from './composables/useTheme'
-import { getAlertStats, getPublicBrand } from './api'
 
 const route = useRoute()
 const router = useRouter()
-const collapsed = ref(false)
-const sidebarWidth = computed(() => collapsed.value ? '68px' : '260px')
-const currentRoute = computed(() => route.path)
-const currentMeta = computed(() => route.meta)
 const showLayout = computed(() => route.path !== '/login')
+// FEATURE_FLAG: 北极星 / 灭火图暂不开放；恢复时改为 true 即可重新显示导航。
+const SHOW_FIREMAP_SCENE = false
+const currentTitle = computed(() => (route.meta.title as string) || 'PromAI')
 const username = ref(localStorage.getItem('username') || 'Admin')
-const platformName = ref('PromAI')
-const platformSubtitle = ref('运维监控平台')
+const { setTheme, themeOptions } = useTheme()
 
-async function loadBrand() {
-  try {
-    const r = await getPublicBrand()
-    if (r.data.platform_name) platformName.value = r.data.platform_name
-    if (r.data.platform_subtitle) platformSubtitle.value = r.data.platform_subtitle
-  } catch {}
+type GroupKey = 'firemap' | 'alert' | 'tool' | 'k8s'
+const open = reactive<Record<GroupKey, boolean>>({ firemap: true, alert: false, tool: false, k8s: false })
+const firemapTab = computed(() => (route.query.view as string) || '')
+
+watch(
+  () => route.path,
+  (p) => {
+    if (p.startsWith('/firemap')) open.firemap = true
+    if (p.startsWith('/alert')) open.alert = true
+  },
+  { immediate: true },
+)
+
+function go(path: string) {
+  if (route.fullPath !== path) router.push(path)
 }
-
-const { currentTheme, setTheme, themeOptions } = useTheme()
-const alertUnreadCount = ref(0)
-let pollTimer: ReturnType<typeof setInterval> | null = null
-async function pollAlertCount() {
-  try { const r = await getAlertStats(); alertUnreadCount.value = r.data.unread_count || 0 } catch {}
+function isActive(path: string) {
+  return route.path === path
 }
-onMounted(() => { loadBrand(); pollAlertCount(); pollTimer = setInterval(pollAlertCount, 15000) })
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
-
-function toggleCollapse() {
-  collapsed.value = !collapsed.value
+function toggle(k: GroupKey) {
+  open[k] = !open[k]
 }
-
-function handleThemeChange(name: string) {
-  setTheme(name as any)
-}
-
-function handleLogout() {
-  localStorage.removeItem('token')
-  localStorage.removeItem('username')
-  router.push('/login')
+function handleThemeChange(cmd: string) {
+  if (cmd === '__logout__') {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    router.push('/login')
+    return
+  }
+  setTheme(cmd as any)
 }
 </script>
 
 <style scoped>
-.app-shell {
-  height: 100vh;
-  position: relative;
-  overflow: hidden;
+/* 全局 body 为 overflow:hidden，因此整站滚动必须由 .fc-content 内部承担。
+   .fc-app 固定视口高度且禁止溢出，否则内容撑开后无处可滚。 */
+.fc-app { display: flex; height: 100vh; overflow: hidden; background: var(--bg-primary); color: var(--text-primary); }
+
+/* ===== 侧栏（v4：白色 196px） ===== */
+.fc-side {
+  width: var(--sidebar-width); background: var(--bg-secondary);
+  border-right: 1px solid var(--border); flex-shrink: 0;
+  display: flex; flex-direction: column; flex-shrink: 0;
+  height: 100vh; overflow-y: auto; z-index: 6;
 }
-
-.bg-grid {
-  position: fixed;
-  inset: 0;
-  background-image:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: 48px 48px;
-  pointer-events: none;
-  z-index: 0;
+.fc-brand { padding: 13px 15px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid #f0f1f3; }
+.fc-logo {
+  width: 26px; height: 26px; border-radius: 7px;
+  background: linear-gradient(135deg, #8b6ee0, #5b3fb0);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 14px;
 }
-
-.app-layout {
-  height: 100vh;
-  position: relative;
-  z-index: 1;
+.fc-brand h1 { margin: 0; font-size: 14px; font-weight: 600; color: #2b2f36; letter-spacing: .3px; }
+.fc-nav { flex: 1; padding: 6px 0; }
+.fc-nav a {
+  display: flex; align-items: center; gap: 9px; padding: 7px 16px;
+  color: #4a5058; text-decoration: none; font-size: 12px; cursor: pointer;
+  transition: .12s; border-left: 3px solid transparent; user-select: none;
 }
-
-.app-sidebar {
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  position: relative;
+.fc-nav a:hover { background: #f7f7fa; }
+.fc-nav a.on { background: var(--cyan-dim); color: var(--cyan); border-left-color: var(--cyan); font-weight: 600; }
+.fc-nav a .ic { width: 15px; text-align: center; color: #8f96a0; font-size: 13px; }
+.fc-nav a.on .ic { color: var(--cyan); }
+.fc-nav a .caret { margin-left: auto; font-size: 9px; color: #b0b6bf; }
+.fc-nav a.fc-static { cursor: default; }
+.fc-nav a.fc-static:hover { background: transparent; }
+.fc-grp { padding: 13px 16px 4px; font-size: 10px; color: #b0b6bf; letter-spacing: 1px; }
+.fc-sub a { padding: 5px 16px 5px 40px; font-size: 11.5px; color: #7a818b; }
+.fc-sub a.on { background: var(--cyan-dim); color: var(--cyan); font-weight: 600; }
+.fc-side-ft {
+  padding: 10px 16px; border-top: 1px solid #f0f1f3; font-size: 10.5px;
+  color: #9aa1ac; display: flex; align-items: center; gap: 6px;
 }
-
-.app-sidebar::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: -1px;
-  width: 1px;
-  height: 100%;
-  background: linear-gradient(180deg, transparent, var(--cyan), var(--purple), transparent);
-  opacity: 0.15;
+.fc-avatar-sm {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  background: linear-gradient(135deg, #7c5cd6, #4a3290); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 8px;
 }
+.fc-ft-sub { margin-left: auto; font-size: 9px; color: #c2c8d0; }
 
-.sidebar-header {
-  height: 64px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px 0 20px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+/* ===== 主区 ===== */
+/* 主区固定视口高度，overflow:hidden 让滚动只发生在 .fc-content 内。 */
+.fc-main { flex: 1; min-width: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+.fc-top {
+  height: var(--header-height); background: #fff; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 18px; gap: 12px;
+  position: sticky; top: 0; z-index: 5; flex-shrink: 0;
 }
-
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  overflow: hidden;
+.fc-top-title { font-size: 15px; font-weight: 600; color: #2b2f36; }
+.fc-space {
+  display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; cursor: pointer;
 }
-
-.logo-icon {
-  flex-shrink: 0;
+.fc-what { font-size: 11.5px; color: var(--text-tertiary); cursor: pointer; }
+.fc-spacer { flex: 1; }
+.fc-ai-btn {
+  display: flex; align-items: center; gap: 6px; background: var(--cyan); color: #fff;
+  border: none; border-radius: 6px; padding: 6px 13px; font-size: 11.5px;
+  font-weight: 600; cursor: pointer; box-shadow: 0 1px 4px rgba(109, 75, 196, .25);
 }
-
-.logo-text-group {
-  display: flex;
-  flex-direction: column;
-  white-space: nowrap;
+.fc-ai-btn:hover { background: var(--primary-hover); }
+.fc-top-link { font-size: 11.5px; color: var(--text-secondary); cursor: pointer; }
+.fc-top-link:hover { color: var(--cyan); }
+.fc-avatar {
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  background: linear-gradient(135deg, #7c5cd6, #4a3290); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 10px;
 }
+.fc-content { flex: 1; min-height: 0; overflow: auto; position: relative; }
 
-.logo-text {
-  font-size: 18px;
-  font-weight: 800;
-  background: linear-gradient(135deg, var(--cyan), var(--purple));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: -0.5px;
-}
-
-.collapse-icon {
-  color: var(--text-tertiary);
-}
-
-.logo-sub {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  font-weight: 500;
-}
-
-.collapse-btn {
-  flex-shrink: 0;
-  padding: 4px;
-}
-
-.sidebar-nav {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 0;
-}
-
-.sidebar-nav::-webkit-scrollbar { width: 2px; }
-
-.el-menu {
-  border-right: none !important;
-}
-
-.el-menu-item {
-  margin: 2px 10px;
-  border-radius: 10px;
-  height: 42px;
-  line-height: 42px;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  color: var(--text-secondary) !important;
-}
-
-.el-menu-item:hover {
-  background: var(--cyan-dim) !important;
-  color: var(--text-primary) !important;
-}
-
-.el-menu-item.is-active {
-  background: var(--cyan-dim) !important;
-  color: var(--cyan) !important;
-  font-weight: 600;
-}
-
-:deep(.el-sub-menu__title) {
-  color: var(--text-secondary) !important;
-}
-
-:deep(.el-sub-menu__title:hover) {
-  color: var(--text-primary) !important;
-  background: var(--cyan-dim) !important;
-}
-
-:deep(.el-sub-menu.is-active .el-sub-menu__title) {
-  color: var(--cyan) !important;
-}
-
-.el-menu-item.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 20px;
-  background: var(--cyan);
-  border-radius: 0 4px 4px 0;
-  box-shadow: 0 0 12px var(--cyan-dim);
-}
-
-.sidebar-footer {
-  border-top: 1px solid var(--border);
-  padding: 14px 20px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--emerald);
-  box-shadow: 0 0 12px var(--emerald-dim);
-  animation: pulse-dot 2s ease-in-out infinite;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.app-header {
-  height: 64px;
-  background: var(--bg-elevated);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 32px;
-  position: relative;
-  z-index: 10;
-}
-
-.app-header::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 5%;
-  width: 90%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border), transparent);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.header-left .el-breadcrumb { font-size: 14px; }
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.header-btn {
-  color: var(--text-secondary) !important;
-  font-size: 13px;
-}
-
-.header-user {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.user-name {
-  font-weight: 500;
-}
-
-.app-main {
-  background: transparent;
-  padding: 0;
-  overflow: hidden;
-  position: relative;
-}
-
-.page-fade-enter-active,
-.page-fade-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.page-fade-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
-.page-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-.alert-badge { --el-badge-bg-color: var(--red); margin-top: -2px; }
-.alert-badge :deep(.el-badge__content) { font-size: 11px; padding: 0 5px; height: 18px; line-height: 18px; border: none; }
-.inspect-badge { --el-badge-bg-color: var(--cyan); margin-top: -2px; margin-right: 12px; }
-.inspect-badge :deep(.el-badge__content) { font-size: 10px; padding: 0 5px; height: 16px; line-height: 16px; border: none; }
+.fc-fade-enter-active, .fc-fade-leave-active { transition: opacity .2s ease, transform .2s ease; }
+.fc-fade-enter-from { opacity: 0; transform: translateY(5px); }
+.fc-fade-leave-to { opacity: 0; transform: translateY(-5px); }
 </style>

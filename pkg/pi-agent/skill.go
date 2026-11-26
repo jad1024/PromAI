@@ -14,8 +14,8 @@ import (
 type Skill struct {
 	Name          string `json:"name" yaml:"name"`
 	Description   string `json:"description" yaml:"description"`
-	Instruction   string `json:"instruction" yaml:"-"`   // markdown body
-	Metadata      string `json:"metadata" yaml:"-"`      // JSON string
+	Instruction   string `json:"instruction" yaml:"-"` // markdown body
+	Metadata      string `json:"metadata" yaml:"-"`    // JSON string
 	UserInvocable bool   `json:"user_invocable" yaml:"user-invocable"`
 	Enabled       bool   `json:"enabled" yaml:"x-enabled"`
 	Source        string `json:"source" yaml:"-"`

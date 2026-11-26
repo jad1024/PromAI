@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"PromAI/pkg/alerting"
 	"PromAI/pkg/alerting/webhook"
 	"PromAI/pkg/database"
+	"PromAI/pkg/llm"
 	"PromAI/pkg/report"
 
 	"github.com/jay-y/pi/pkg/ai"
@@ -51,12 +53,85 @@ func (h *AgentHandler) AIEnabled() bool {
 	return h.config.AI.Enabled && len(h.config.AI.Models) > 0
 }
 
+// llmBreakerKey 返回当前默认模型的熔断键。
+// 按 (provider, model, API key 哈希) 三元组隔离：一个坏 key 不会拖垮同 provider 的其他模型。
+func (h *AgentHandler) llmBreakerKey() llm.BreakerKey {
+	if h == nil || h.config == nil {
+		return llm.NewBreakerKey("", "", "")
+	}
+	mc := h.getDefaultModel()
+	if mc == nil {
+		return llm.NewBreakerKey("", "", "")
+	}
+	key := mc.APIKey
+	if key == "" {
+		key = os.Getenv("LLM_API_KEY")
+	}
+	return llm.NewBreakerKey(mc.Provider, mc.Model, key)
+}
+
 // RunHeadless 执行一次无头 Prompt（不创建 HTTP 会话），收集完整响应文本。
 // timeout <= 0 时使用默认 90s。
+//
+//  resilience 策略（不修改 pi SDK，全部在外层完成）：
+//   - 熔断：调用前检查 DefaultBreaker；OPEN 时直接拒绝，不发起 HTTP 请求。
+//   - 重试：仅对 429/5xx/网络错误重试（见 pkg/llm.ClassifyError）；
+//     认证错误、参数错误、本地超时不重试，避免无意义的重复请求。
+//   - 失败计数：只有瞬时故障计入熔断，配置类错误不熔断（避免掩盖配置问题）。
 func (h *AgentHandler) RunHeadless(ctx context.Context, prompt string, timeout time.Duration) (*HeadlessResult, error) {
 	if h == nil {
 		return nil, fmt.Errorf("AI agent handler 未初始化")
 	}
+
+	breakerKey := h.llmBreakerKey()
+	if err := llm.DefaultBreaker.Allow(breakerKey); err != nil {
+		log.Printf("[LLM Breaker] 拒绝调用 [%s]: %v", breakerKey, err)
+		// 返回非 nil 结果，避免调用方 res.ModelName 触发 nil panic
+		return &HeadlessResult{ModelName: h.currentModelName()}, err
+	}
+
+	attempts := 0
+	res, err := llm.CallWithRetry(ctx, llm.DefaultRetry, func(attemptCtx context.Context, attempt int) (*HeadlessResult, error) {
+		attempts = attempt
+		r, callErr := h.runHeadlessOnce(attemptCtx, prompt, timeout)
+		if callErr != nil {
+			if llm.ClassifyError(callErr) {
+				llm.DefaultBreaker.RecordFailure(breakerKey)
+				log.Printf("[LLM Breaker] 失败计数 [%s] → 状态=%s", breakerKey, llm.DefaultBreaker.State(breakerKey))
+			}
+			if attempt > 1 {
+				return r, fmt.Errorf("%w（第 %d 次尝试）", callErr, attempt)
+			}
+			return r, callErr
+		}
+		llm.DefaultBreaker.RecordSuccess(breakerKey)
+		return r, nil
+	})
+
+	if res == nil {
+		mc := h.getDefaultModel()
+		name := ""
+		if mc != nil {
+			name = mc.Name
+		}
+		res = &HeadlessResult{ModelName: name}
+	}
+	return res, llm.FormatRetryError(err, attempts)
+}
+
+// currentModelName 返回当前默认模型名，仅用于熔断拒绝时填充结果对象。
+func (h *AgentHandler) currentModelName() string {
+	if h == nil || h.config == nil {
+		return ""
+	}
+	if mc := h.getDefaultModel(); mc != nil {
+		return mc.Name
+	}
+	return ""
+}
+
+// runHeadlessOnce 执行单次无头 Prompt（不含熔断/重试），是 RunHeadless 的实际工作单元。
+func (h *AgentHandler) runHeadlessOnce(ctx context.Context, prompt string, timeout time.Duration) (*HeadlessResult, error) {
 	ag, modelName := h.newAgent("")
 	if ag == nil {
 		return nil, fmt.Errorf("未配置 AI 模型，无法执行无头分析")

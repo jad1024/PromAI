@@ -9,8 +9,8 @@ import (
 
 	"PromAI/pkg/config"
 	"PromAI/pkg/prometheus"
-	agent "github.com/jay-y/pi/pkg/ai-agent"
 	"github.com/jay-y/pi/pkg/ai"
+	agent "github.com/jay-y/pi/pkg/ai-agent"
 	"github.com/prometheus/common/model"
 )
 
@@ -19,9 +19,11 @@ type QueryMetricsTool struct {
 	db     DB
 }
 
-func (t *QueryMetricsTool) GetName() string         { return "query_metrics" }
-func (t *QueryMetricsTool) GetLabel() string        { return "查询指标" }
-func (t *QueryMetricsTool) GetDescription() string  { return "查询 Prometheus 监控指标数据，返回实时指标值" }
+func (t *QueryMetricsTool) GetName() string  { return "query_metrics" }
+func (t *QueryMetricsTool) GetLabel() string { return "查询指标" }
+func (t *QueryMetricsTool) GetDescription() string {
+	return "查询 Prometheus 监控指标数据，返回实时指标值"
+}
 
 func (t *QueryMetricsTool) GetParameters() map[string]any {
 	return map[string]any{

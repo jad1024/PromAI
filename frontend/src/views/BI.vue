@@ -194,9 +194,9 @@
           <div v-if="expandedDS" style="overflow: auto; flex: 1;">
             <div style="padding: 4px 16px 0;">
               <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
-                <el-tag :type="typeFilter === '' ? '' : 'info'" :effect="typeFilter === '' ? 'dark' : 'plain'" size="small" style="cursor: pointer;" @click="typeFilter = ''">全部</el-tag>
-                <el-tag v-for="t in typeOptions" :key="t" :type="typeFilter === t ? '' : 'info'" :effect="typeFilter === t ? 'dark' : 'plain'" size="small" style="cursor: pointer;" @click="typeFilter = t">{{ t }}</el-tag>
-                <el-input v-model="metricSearch" placeholder="搜索" size="small" style="width: 160px; margin-left: auto;" clearable />
+                <el-tag :type="typeFilter === '' ? '' : 'info'" :effect="typeFilter === '' ? 'dark' : 'plain'" size="small" style="cursor: pointer;" @click="typeFilter = ''; onMetricFilterChange()">全部</el-tag>
+                <el-tag v-for="t in typeOptions" :key="t" :type="typeFilter === t ? '' : 'info'" :effect="typeFilter === t ? 'dark' : 'plain'" size="small" style="cursor: pointer;" @click="typeFilter = t; onMetricFilterChange()">{{ t }}</el-tag>
+                <el-input v-model="metricSearch" placeholder="搜索" size="small" style="width: 160px; margin-left: auto;" clearable @input="onMetricFilterChange" />
               </div>
               <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;" v-if="expandedDS.type_summaries">
                 <div v-for="s in expandedDS.type_summaries" :key="s.type_name" style="display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); font-size: 12px;">
@@ -210,7 +210,7 @@
               </div>
             </div>
             <div style="padding: 0 16px 8px;">
-              <el-table :data="filteredMetrics" stripe size="small" height="100%">
+              <el-table :data="pagedMetrics" stripe size="small" height="100%">
                 <el-table-column prop="type_name" label="类型" min-width="100" />
                 <el-table-column prop="metric_name" label="指标名称" min-width="120"><template #default="{ row }"><span style="font-weight: 600; color: var(--text-primary); font-size: 12px;">{{ row.metric_name }}</span></template></el-table-column>
                 <el-table-column label="标签" width="280"><template #default="{ row }"><div style="display: flex; flex-wrap: wrap; gap: 2px 6px;"><template v-for="(v, k) in row.labels" :key="k"><span v-if="v && v !== '-'" style="font-size: 11px; color: var(--text-tertiary);"><span style="color: var(--text-secondary);">{{ k }}:</span> {{ v }}</span></template></div></template></el-table-column>
@@ -219,6 +219,11 @@
                 <el-table-column label="阈值" width="80" align="center"><template #default="{ row }">{{ row.threshold > 0 ? row.threshold_type === 'less' ? '< ' : '> ' : '' }}{{ row.threshold > 0 ? row.threshold : '-' }}</template></el-table-column>
                 <el-table-column prop="unit" label="单位" width="50" align="center" />
               </el-table>
+              <div style="display: flex; justify-content: flex-end; padding-top: 8px;">
+                <el-pagination v-model:current-page="metricPage" v-model:page-size="metricPageSize"
+                               :total="filteredMetrics.length" :page-sizes="[20, 50, 100, 200]"
+                               layout="total, sizes, prev, pager, next" background small />
+              </div>
             </div>
           </div>
           <div v-else style="padding: 40px 20px; text-align: center; color: var(--text-tertiary); display: flex; flex-direction: column; align-items: center; gap: 12px;">
@@ -236,7 +241,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 // @ts-ignore
 import { GridLayout, GridItem } from 'vue3-grid-layout'
 import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts'
+import * as echarts from '../utils/echarts'
 import { getAllDataSources, getDashboardHealth, getDashboardHealthTrend, openReportFile } from '../api'
 import type { DataSource } from '../types'
 
@@ -264,6 +269,9 @@ const dsSortProp = ref('health_score')
 const dsSortOrder = ref<'asc' | 'desc'>('asc')
 const dsPage = ref(1)
 const dsPageSize = ref(10)
+// 指标明细分页：单数据源可达数千指标，必须限制一次渲染的 DOM 行数。
+const metricPage = ref(1)
+const metricPageSize = ref(50)
 
 const pieChartRef = ref<HTMLElement>()
 const typeBarRef = ref<HTMLElement>()
@@ -395,6 +403,12 @@ const filteredMetrics = computed(() => {
   if (metricSearch.value) { const q = metricSearch.value.toLowerCase(); list = list.filter((m: any) => m.metric_name.toLowerCase().includes(q) || m.type_name.toLowerCase().includes(q)) }
   return [...list].sort((a: any, b: any) => a.type_name?.localeCompare(b.type_name) || 0)
 })
+// 表格只渲染当前页，避免几千行 DOM 拖垮页面；CSV 导出仍用 filteredMetrics 全量。
+const pagedMetrics = computed(() => {
+  const start = (metricPage.value - 1) * metricPageSize.value
+  return filteredMetrics.value.slice(start, start + metricPageSize.value)
+})
+function onMetricFilterChange() { metricPage.value = 1 }
 
 watch(dsSearch, () => { dsPage.value = 1 })
 
@@ -412,7 +426,7 @@ function handleSortChange({ prop, order }: any) {
 function switchDS(row: any) {
   const d = healthData.value.find((h: any) => h.datasource.id === row.datasource?.id || h.datasource.id === row.id)
   if (d) expandedDS.value = d
-  typeFilter.value = ''; metricSearch.value = ''
+  typeFilter.value = ''; metricSearch.value = ''; metricPage.value = 1
 }
 
 function viewReport(ds: any) {
@@ -566,12 +580,8 @@ onMounted(async () => {
     fetchData(),
   ])
   await fetchTrend()
-  // 自动展开第一个数据源的指标明细：避免首次进入页面看到空态
-  if (allDatasources.value.length > 0 && !expandedDS.value) {
-    const first = allDatasources.value[0]
-    const d = healthData.value.find((h: any) => h.datasource.id === first.id)
-    if (d) expandedDS.value = d
-  }
+  // 不自动展开指标明细：单个数据源可能有数千个指标，一次性渲染会卡死浏览器。
+  // 用户点击「详情」后再按需加载，并配合分页限制 DOM 行数。
 })
 
 onUnmounted(() => {

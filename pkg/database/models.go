@@ -163,46 +163,46 @@ type CronJob struct {
 	Enabled        bool   `gorm:"default:true" json:"enabled"`
 	NotifyChannels string `gorm:"type:text" json:"notify_channels"`
 	// 巡检指标范围：按巡检模版(Template)/指标分组(MetricType)/具体指标(MetricConfig)指定；均为空表示巡检该数据源的全部有效指标
-	TemplateIDs     string `gorm:"type:text" json:"template_ids"`       // 巡检模版 ID JSON 数组，如 [1,2]（优先级最高）
+	TemplateIDs     string `gorm:"type:text" json:"template_ids"`      // 巡检模版 ID JSON 数组，如 [1,2]（优先级最高）
 	MetricTypeIDs   string `gorm:"type:text" json:"metric_type_ids"`   // 指标分组 ID JSON 数组，如 [1,2]
 	MetricConfigIDs string `gorm:"type:text" json:"metric_config_ids"` // 具体指标 ID JSON 数组，如 [3,4]
 	// 大集群分批巡检：每批并发巡检的数据源数量，0 表示不限（一次全量并发）
 	BatchSize int `json:"batch_size"`
 	// AI 巡检分析：巡检完成后调用 AI 对结果做健康分析，并推送到飞书通道
-	AiAnalysisEnabled bool       `json:"ai_analysis_enabled"`                 // 是否启用 AI 巡检分析
-	AiAnalysisPrompt  string     `gorm:"type:text" json:"ai_analysis_prompt"` // 自定义 AI 分析提示词（可选，空则使用内置模板）
-	AiOnlyAbnormal    bool       `json:"ai_only_abnormal"`                    // 仅当巡检存在异常（critical/warning）时才调用 AI 分析，正常时跳过以节省 token
+	AiAnalysisEnabled bool   `json:"ai_analysis_enabled"`                 // 是否启用 AI 巡检分析
+	AiAnalysisPrompt  string `gorm:"type:text" json:"ai_analysis_prompt"` // 自定义 AI 分析提示词（可选，空则使用内置模板）
+	AiOnlyAbnormal    bool   `json:"ai_only_abnormal"`                    // 仅当巡检存在异常（critical/warning）时才调用 AI 分析，正常时跳过以节省 token
 	// 关联的外部告警源 ID（JSON 数组）：AI 巡检分析时按告警源隔离上下文。
 	// 例如「华为云巡检」任务关联 SMN 告警源，「期货巡检」任务关联 n9e 告警源，
 	// 巡检华为云时 AI 分析不会把期货(n9e)告警纳入分析。为空表示不过滤（沿用全部告警）。
-	AlertSourceIDs string `gorm:"type:text" json:"alert_source_ids"`
-	LastRunAt         *time.Time `json:"last_run_at"`
-	LastStatus        string     `gorm:"size:50" json:"last_status"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	AlertSourceIDs string     `gorm:"type:text" json:"alert_source_ids"`
+	LastRunAt      *time.Time `json:"last_run_at"`
+	LastStatus     string     `gorm:"size:50" json:"last_status"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type ReportRecord struct {
-	ID             uint      `gorm:"primaryKey" json:"id"`
-	Title          string    `gorm:"size:200" json:"title"`
-	DatasourceID   *uint     `json:"datasource_id"`
-	DatasourceName string    `gorm:"size:200" json:"datasource_name"`
-	FilePath       string    `gorm:"size:500" json:"file_path"`
-	FileSize       int64     `json:"file_size"`
-	TotalMetrics   int       `json:"total_metrics"`
-	AlertCount     int       `json:"alert_count"`
-	CriticalCount  int       `json:"critical_count"`
-	WarningCount   int       `json:"warning_count"`
-	Status         string    `gorm:"size:50" json:"status"`
-	Duration       string    `gorm:"size:50" json:"duration"`
-	MetricsJSON    string    `gorm:"type:text" json:"metrics_json"`
+	ID             uint   `gorm:"primaryKey" json:"id"`
+	Title          string `gorm:"size:200" json:"title"`
+	DatasourceID   *uint  `json:"datasource_id"`
+	DatasourceName string `gorm:"size:200;index:idx_report_ds_created_at,priority:1" json:"datasource_name"`
+	FilePath       string `gorm:"size:500" json:"file_path"`
+	FileSize       int64  `json:"file_size"`
+	TotalMetrics   int    `json:"total_metrics"`
+	AlertCount     int    `json:"alert_count"`
+	CriticalCount  int    `json:"critical_count"`
+	WarningCount   int    `json:"warning_count"`
+	Status         string `gorm:"size:50" json:"status"`
+	Duration       string `gorm:"size:50" json:"duration"`
+	MetricsJSON    string `gorm:"type:text" json:"metrics_json"`
 	// 关联溯源（Commit1）
-	TriggerType   string  `gorm:"size:32;index" json:"trigger_type"` // manual / cron / manual_ai / cron_ai
-	CronJobID     *uint   `gorm:"index" json:"cron_job_id,omitempty"`
-	InspectTaskID string  `gorm:"size:100;index" json:"inspect_task_id"` // 关联 InspectRecord.TaskID
-	TemplateNames string  `gorm:"size:500" json:"template_names"`         // 冗余存名称，方便列表直接展示，如 "[华为云基础][Redis集群]"
-	TemplateIDs   string  `gorm:"type:text" json:"template_ids"`          // 原始 ID JSON
-	CreatedAt     time.Time `json:"created_at"`
+	TriggerType   string    `gorm:"size:32;index" json:"trigger_type"` // manual / cron / manual_ai / cron_ai
+	CronJobID     *uint     `gorm:"index" json:"cron_job_id,omitempty"`
+	InspectTaskID string    `gorm:"size:100;index" json:"inspect_task_id"` // 关联 InspectRecord.TaskID
+	TemplateNames string    `gorm:"size:500" json:"template_names"`        // 冗余存名称，方便列表直接展示，如 "[华为云基础][Redis集群]"
+	TemplateIDs   string    `gorm:"type:text" json:"template_ids"`         // 原始 ID JSON
+	CreatedAt     time.Time `gorm:"index:idx_report_created_at,sort:desc;index:idx_report_ds_created_at,priority:2" json:"created_at"`
 }
 
 type AppSetting struct {
@@ -213,14 +213,14 @@ type AppSetting struct {
 }
 
 type InspectionTemplate struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Name        string    `gorm:"size:200;not null" json:"name"`
-	Description string    `gorm:"size:500" json:"description"`
-	Category    string    `gorm:"size:100;index" json:"category"` // 模板族分类，如 基础设施 / 数据库 / 中间件 / 自定义
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Name        string `gorm:"size:200;not null" json:"name"`
+	Description string `gorm:"size:500" json:"description"`
+	Category    string `gorm:"size:100;index" json:"category"` // 模板族分类，如 基础设施 / 数据库 / 中间件 / 自定义
 	// 关联的外部告警源 ID（JSON 数组）：用于 AI 巡检分析时按告警源隔离上下文。
 	// 例如「华为云巡检」模版关联 SMN 告警源，「期货平台巡检」模版关联 n9e 告警源，
 	// 巡检华为云时 AI 分析就不会把期货(n9e)的告警也纳入分析。为空表示不过滤（沿用全部告警）。
-	AlertSourceIDs string `gorm:"type:text" json:"alert_source_ids"`
+	AlertSourceIDs string    `gorm:"type:text" json:"alert_source_ids"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -255,13 +255,13 @@ type InspectRecord struct {
 	StartedAt      time.Time  `json:"started_at"`
 	CompletedAt    *time.Time `json:"completed_at"`
 	// 关联溯源（Commit1）
-	TriggerType   string `gorm:"size:32;index" json:"trigger_type"` // manual / cron / manual_ai / cron_ai
-	CronJobID     *uint  `gorm:"index" json:"cron_job_id,omitempty"`
-	TemplateIDs   string `gorm:"type:text" json:"template_ids"`    // JSON 数组，如 [1,2]
-	TemplateNames string `gorm:"size:500" json:"template_names"`  // 冗余存名称，如 "[华为云基础][Redis集群]"
-	AlertSourceIDs string `gorm:"type:text" json:"alert_source_ids"` // JSON 数组（冗余存，最终 alertSourceIDs 解析优先级仍按 CronJob→Template→nil）
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	TriggerType    string    `gorm:"size:32;index" json:"trigger_type"` // manual / cron / manual_ai / cron_ai
+	CronJobID      *uint     `gorm:"index" json:"cron_job_id,omitempty"`
+	TemplateIDs    string    `gorm:"type:text" json:"template_ids"`     // JSON 数组，如 [1,2]
+	TemplateNames  string    `gorm:"size:500" json:"template_names"`    // 冗余存名称，如 "[华为云基础][Redis集群]"
+	AlertSourceIDs string    `gorm:"type:text" json:"alert_source_ids"` // JSON 数组（冗余存，最终 alertSourceIDs 解析优先级仍按 CronJob→Template→nil）
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Apply applies a template-level override onto a MetricConfig
@@ -461,23 +461,23 @@ type AlertInstance struct {
 
 // AlertHistory 告警状态变迁追加表，单条事件不可变
 type AlertHistory struct {
-	ID              uint       `gorm:"primaryKey" json:"id"`
-	Fingerprint     string     `gorm:"index;size:64" json:"fingerprint"`
-	RuleID          uint       `gorm:"index" json:"rule_id"`
-	RuleName        string     `gorm:"size:200" json:"rule_name"`
-	DatasourceID    uint       `gorm:"index" json:"datasource_id"`
-	DatasourceName  string     `gorm:"size:200" json:"datasource_name"`
-	State           string     `gorm:"size:20;index" json:"state"`
-	Severity        string     `gorm:"size:20;index" json:"severity"`
-	Value           float64    `json:"value"`
-	Threshold       float64    `json:"threshold"`
-	LabelsJSON      string     `gorm:"type:text" json:"labels_json"`
-	AnnotationsJSON string     `gorm:"type:text" json:"annotations_json"`
-	EventType       string     `gorm:"size:20;index" json:"event_type"`  // pending/firing/resolved/silenced/inhibited/notified
-	NotifyChannels  string     `gorm:"type:text" json:"notify_channels"` // 通知渠道 JSON: [{"id":1,"type":"wechat_work","name":"企业微信"}]
-	NotifyResult    string     `gorm:"size:20" json:"notify_result"`     // 通知结果: success/failed/throttled
-	OccurredAt      time.Time  `gorm:"index" json:"occurred_at"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	Fingerprint     string    `gorm:"index;size:64" json:"fingerprint"`
+	RuleID          uint      `gorm:"index" json:"rule_id"`
+	RuleName        string    `gorm:"size:200" json:"rule_name"`
+	DatasourceID    uint      `gorm:"index" json:"datasource_id"`
+	DatasourceName  string    `gorm:"size:200" json:"datasource_name"`
+	State           string    `gorm:"size:20;index" json:"state"`
+	Severity        string    `gorm:"size:20;index" json:"severity"`
+	Value           float64   `json:"value"`
+	Threshold       float64   `json:"threshold"`
+	LabelsJSON      string    `gorm:"type:text" json:"labels_json"`
+	AnnotationsJSON string    `gorm:"type:text" json:"annotations_json"`
+	EventType       string    `gorm:"size:20;index" json:"event_type"`  // pending/firing/resolved/silenced/inhibited/notified
+	NotifyChannels  string    `gorm:"type:text" json:"notify_channels"` // 通知渠道 JSON: [{"id":1,"type":"wechat_work","name":"企业微信"}]
+	NotifyResult    string    `gorm:"size:20" json:"notify_result"`     // 通知结果: success/failed/throttled
+	OccurredAt      time.Time `gorm:"index" json:"occurred_at"`
+	CreatedAt       time.Time `json:"created_at"`
 	// RemovedAt 手动硬删标记：用户手动删除实时告警时置位（软删），所有读取侧
 	// 统一过滤 removed_at IS NULL。刻意不用 gorm.DeletedAt，保持 handleAlertHistory
 	// 的 DELETE 仍为物理删除。
@@ -522,8 +522,8 @@ type AlertInhibit struct {
 // 上下文标注，不影响告警触发 / 通知 / 静默。标注但不排除，AI 仍能看到完整告警清单。
 type InspectionExpectation struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
-	Name         string    `gorm:"size:200;not null" json:"name"`      // 规则名，如「实时流 Redis 命中率低」
-	Comment      string    `gorm:"size:500" json:"comment"`            // 说明，如「实时流数据为预期行为，命中率低属正常」
+	Name         string    `gorm:"size:200;not null" json:"name"`           // 规则名，如「实时流 Redis 命中率低」
+	Comment      string    `gorm:"size:500" json:"comment"`                 // 说明，如「实时流数据为预期行为，命中率低属正常」
 	MatchersJSON string    `gorm:"type:text;not null" json:"matchers_json"` // label matcher JSON（AND 关系）
 	CreatedBy    string    `gorm:"size:100" json:"created_by"`
 	Enabled      bool      `gorm:"default:true;index" json:"enabled"`
@@ -603,6 +603,203 @@ type AiAnalysisRecord struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// FlashAICheckConfig FlashAI 检查项配置：一条 = 一个可执行的定向诊断动作。
+// CheckType 决定取证方式：promql(实时查数据源) / alert(firing 告警) /
+// snapshot(巡检快照异常指标) / slo(北极星错误预算) / ai(交给 FlashAI 定向诊断) / log(日志检索)。
+// 旧版只控制"检查哪些"，结果由本地伪规则推导；现改为每条检查项都带真实取证动作。
+type FlashAICheckConfig struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Key       string    `gorm:"size:50;not null;uniqueIndex" json:"key"`
+	Name      string    `gorm:"size:100;not null" json:"name"`
+	Enabled   bool      `gorm:"default:true" json:"enabled"`
+	SortOrder int       `gorm:"default:0" json:"sort_order"`
+	CheckType string    `gorm:"size:20;default:'snapshot'" json:"check_type"`
+	PromQL    string    `gorm:"type:text" json:"promql"`
+	Threshold float64   `json:"threshold"`
+	CompareOp string    `gorm:"size:10;default:'gt'" json:"compare_op"` // gt / lt / eq / ne
+	Unit      string    `gorm:"size:30" json:"unit"`
+	Remark    string    `gorm:"size:500" json:"remark"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// FiremapNode 透视服务树节点：业务 → 服务 → 实例，持久化且可编辑。
+// 与旧实现的关键区别：观测对象不再由巡检快照按 instance label 临时推导，
+// 而是落库成一棵可维护、可重命名、可调整层级的服务树。
+type FiremapNode struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	ParentID     uint      `gorm:"index;default:0" json:"parent_id"`
+	Name         string    `gorm:"size:120;not null" json:"name"`
+	Level        string    `gorm:"size:20;index" json:"level"` // business / service / instance
+	DatasourceID uint      `gorm:"index" json:"datasource_id"`
+	Instance     string    `gorm:"size:200" json:"instance"` // 叶子节点关联的 Prometheus instance 值
+	SortOrder    int       `gorm:"default:0" json:"sort_order"`
+	Remark       string    `gorm:"size:500" json:"remark"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// FiremapCheckResult 定向检查结果留档（每次执行检查项都会落库，供健康分与事件墙回溯）。
+type FiremapCheckResult struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	NodeID    uint      `gorm:"index;not null" json:"node_id"`
+	CheckKey  string    `gorm:"size:50;index" json:"check_key"`
+	Status    string    `gorm:"size:20" json:"status"` // ok / warn / err / na
+	Result    string    `gorm:"size:500" json:"result"`
+	Detail    string    `gorm:"type:text" json:"detail"`
+	CostMs    int64     `json:"cost_ms"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
+}
+
+// FiremapSLO 北极星 SLO 定义（Target 为可用性目标百分比，如 99.9）。
+type FiremapSLO struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	NodeID      uint      `gorm:"index" json:"node_id"`
+	Name        string    `gorm:"size:120;not null" json:"name"`
+	Description string    `gorm:"size:500" json:"description"`
+	Target      float64   `json:"target"`
+	WindowDays  int       `gorm:"default:30" json:"window_days"`
+	PromQL      string    `gorm:"type:text" json:"promql"`
+	Enabled     bool      `gorm:"default:true" json:"enabled"`
+	SortOrder   int       `gorm:"default:0" json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PolarisBusiness 北极星业务线（首页卡片）：图表 / 检测 / 告警 / SLO / 大屏的容器。
+// Flashcat 北极星定位=业务核心指标的故障发现入口，业务线对齐业务组织或核心系统（电商/交易/行情）。
+type PolarisBusiness struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Name         string    `gorm:"size:120;not null;uniqueIndex" json:"name"`
+	Description  string    `gorm:"size:500" json:"description"`
+	Owner        string    `gorm:"size:120" json:"owner"`      // 业务负责人 / GM
+	Team         string    `gorm:"size:120" json:"team"`       // 对口研发/SRE 团队
+	Icon         string    `gorm:"size:20" json:"icon"`        // 卡片图标字符
+	Color        string    `gorm:"size:20" json:"color"`       // 主题色
+	DatasourceID uint      `gorm:"index" json:"datasource_id"` // 默认数据源
+	Enabled      bool      `gorm:"default:true" json:"enabled"`
+	SortOrder    int       `gorm:"default:0" json:"sort_order"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// PolarisChart 业务线下的图表：绑定指标池（复用 MetricConfig.Query 的 PromQL）。
+// 展示形态 chart_type: line / bar / gauge / number / heatmap。
+type PolarisChart struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	BusinessID   uint      `gorm:"index;not null" json:"business_id"`
+	Name         string    `gorm:"size:120;not null" json:"name"`
+	ChartType    string    `gorm:"size:20;default:'line'" json:"chart_type"`
+	MetricIDs    string    `gorm:"type:text" json:"metric_ids"`    // MetricConfig ID 列表，JSON 数组
+	CustomPromQL string    `gorm:"type:text" json:"custom_promql"` // 无指标池时可直接写 PromQL
+	Unit         string    `gorm:"size:30" json:"unit"`
+	Enabled      bool      `gorm:"default:true" json:"enabled"`
+	SortOrder    int       `gorm:"default:0" json:"sort_order"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// PolarisDetection 北极星智能检测配置：挂在一个图表/指标上，产出异常事件。
+// detect_type: predict(智能预测) / mom(同环比) / threshold(阈值) / nodata(数据中断)。
+type PolarisDetection struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	BusinessID  uint      `gorm:"index;not null" json:"business_id"`
+	ChartID     uint      `gorm:"index" json:"chart_id"`
+	MetricID    uint      `gorm:"index" json:"metric_id"`
+	DetectType  string    `gorm:"size:20;not null" json:"detect_type"`
+	Threshold   float64   `json:"threshold"`                              // threshold 检测的上/下界
+	CompareOp   string    `gorm:"size:10;default:'lt'" json:"compare_op"` // gt / lt
+	DurationMin int       `gorm:"default:3" json:"duration_min"`          // 连续触发分钟数（去抖）
+	Sensitivity float64   `gorm:"default:3" json:"sensitivity"`           // 预测/同环比的敏感度（如 z-score）
+	Enabled     bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PolarisAlertPolicy 北极星告警策略：把检测事件按等级/时段/接收组通知出去。
+type PolarisAlertPolicy struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	BusinessID    uint      `gorm:"index;not null" json:"business_id"`
+	Name          string    `gorm:"size:120;not null" json:"name"`
+	Severity      string    `gorm:"size:20;default:'warning'" json:"severity"` // critical / warning
+	Enabled       bool      `gorm:"default:true" json:"enabled"`
+	ActiveFrom    string    `gorm:"size:10" json:"active_from"` // 生效时段 HH:MM，空=全天
+	ActiveTo      string    `gorm:"size:10" json:"active_to"`
+	NotifyTarget  string    `gorm:"size:300" json:"notify_target"` // 接收组/渠道，逗号分隔
+	FiremapNodeID uint      `gorm:"index" json:"firemap_node_id"`  // 下钻目标灭火图节点
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// FiremapHealthSnapshot 灭火图健康分历史快照：每分钟落一次，支撑时间轴回放。
+type FiremapHealthSnapshot struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	NodeID      uint      `gorm:"index;not null" json:"node_id"`
+	HealthScore float64   `json:"health_score"`
+	Status      string    `gorm:"size:20" json:"status"`
+	Critical    int       `json:"critical"`
+	Warning     int       `json:"warning"`
+	Normal      int       `json:"normal"`
+	Alerts      int       `json:"alerts"`
+	CreatedAt   time.Time `gorm:"index" json:"created_at"`
+}
+
+// FiremapDrillRule 灭火图下钻规则：把指标/日志/链路/大盘/事件挂到观测对象上。
+// target_type: metric / log / trace / dashboard / event / external。
+type FiremapDrillRule struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	NodeID     uint      `gorm:"index;not null" json:"node_id"`
+	Name       string    `gorm:"size:120;not null" json:"name"`
+	TargetType string    `gorm:"size:20;not null" json:"target_type"`
+	TargetURL  string    `gorm:"size:500" json:"target_url"` // 外部/大盘跳转地址
+	Query      string    `gorm:"type:text" json:"query"`     // PromQL / 日志检索式 / traceId
+	Enabled    bool      `gorm:"default:true" json:"enabled"`
+	SortOrder  int       `gorm:"default:0" json:"sort_order"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// FiremapAlertRule 灭火图告警规则：观测对象飘红时按条件触发告警通知。
+type FiremapAlertRule struct {
+	ID           uint       `gorm:"primaryKey" json:"id"`
+	NodeID       uint       `gorm:"index;not null" json:"node_id"`
+	Name         string     `gorm:"size:120;not null" json:"name"`
+	Condition    string     `gorm:"size:30;default:'critical'" json:"condition"` // critical / any_abnormal / score_below
+	ScoreBelow   float64    `json:"score_below"`
+	Enabled      bool       `gorm:"default:true" json:"enabled"`
+	NotifyTarget string     `gorm:"size:300" json:"notify_target"`
+	LastFiredAt  *time.Time `json:"last_fired_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// FiremapTemplate 灭火图观测规则模板：按数据源类型一键生成卡片/层级/检查项。
+// match_keywords 用于和数据源名称做匹配度评估。
+type FiremapTemplate struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	Name            string    `gorm:"size:120;not null;uniqueIndex" json:"name"`
+	Category        string    `gorm:"size:60" json:"category"`            // mysql / redis / k8s / apm / host
+	MatchKeywords   string    `gorm:"size:300" json:"match_keywords"`     // 逗号分隔，匹配数据源名称
+	MetricPrefixes  string    `gorm:"type:text" json:"metric_prefixes"`   // 逗号分隔的指标前缀
+	CheckConfigJSON string    `gorm:"type:text" json:"check_config_json"` // 生成的检查项 JSON
+	Builtin         bool      `gorm:"default:false" json:"builtin"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// FiremapEvent 事件墙事件（聚合告警 / 检查异常 / AI 诊断 / 外部告警）。
+type FiremapEvent struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	NodeID    uint      `gorm:"index" json:"node_id"`
+	Source    string    `gorm:"size:30;index" json:"source"`   // alert / check / ai / inspection / external
+	Severity  string    `gorm:"size:20;index" json:"severity"` // critical / warning / info
+	Title     string    `gorm:"size:300" json:"title"`
+	Detail    string    `gorm:"type:text" json:"detail"`
+	Status    string    `gorm:"size:20;default:'open'" json:"status"`
+	RefID     string    `gorm:"size:100" json:"ref_id"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
+}
+
 // ExternalAlertSource 外部告警源（n9e / 华为云 CES / 阿里云 CloudMonitor / 通用 webhook）
 // 用于将外部平台维护的告警汇聚进 PromAI：规则只读同步 + webhook 事件接收
 type ExternalAlertSource struct {
@@ -678,8 +875,8 @@ type ExternalRule struct {
 type PortScanTask struct {
 	ID           uint       `gorm:"primaryKey" json:"id"`
 	TaskID       string     `gorm:"size:100;index" json:"task_id"`
-	TargetsJSON  string     `gorm:"type:text" json:"-"` // 目标 IP 列表 JSON 数组
-	PortsJSON    string     `gorm:"type:text" json:"-"` // 端口列表 JSON 数组
+	TargetsJSON  string     `gorm:"type:text" json:"-"`                    // 目标 IP 列表 JSON 数组
+	PortsJSON    string     `gorm:"type:text" json:"-"`                    // 端口列表 JSON 数组
 	Status       string     `gorm:"size:50;default:running" json:"status"` // running / completed / failed
 	TotalTargets int        `json:"total_targets"`
 	TotalPorts   int        `json:"total_ports"`
@@ -703,6 +900,21 @@ type PortScanResult struct {
 	Risk      string    `gorm:"size:20" json:"risk"`       // high / medium / low
 	LatencyMs int64     `json:"latency_ms"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// AIFeedback AI 结论效果反馈：一条 = 用户对一次 AI 诊断/巡检结论的确认与效果评价。
+// 用于形成"AI 结论 → 人工确认 → 告警下降"的数据飞轮。
+type AIFeedback struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	AnalysisID   uint      `gorm:"index" json:"analysis_id"`     // 关联 AiAnalysisRecord.ID，0 表示外部/巡检记录
+	RefID        string    `gorm:"size:100;index" json:"ref_id"` // 巡检 task_id 或告警 group_key
+	Verdict      string    `gorm:"size:20;index" json:"verdict"` // confirmed(有效) / invalid(无效) / pending
+	Note         string    `gorm:"size:500" json:"note"`
+	AlertsBefore int       `json:"alerts_before"` // 结论时的活跃告警数
+	AlertsAfter  int       `json:"alerts_after"`  // 反馈时（如 30 分钟后）的活跃告警数
+	Operator     string    `gorm:"size:50" json:"operator"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func AutoMigrate(db *gorm.DB) error {
@@ -733,6 +945,21 @@ func AutoMigrate(db *gorm.DB) error {
 		&AlertGroup{},
 		&AlertNotifyLog{},
 		&AiAnalysisRecord{},
+		&AIFeedback{},
+		&FlashAICheckConfig{},
+		// Flashcat 场景层：透视服务树 / 定向检查 / 北极星 / 事件墙
+		&FiremapNode{},
+		&FiremapCheckResult{},
+		&FiremapSLO{},
+		&FiremapEvent{},
+		&PolarisBusiness{},
+		&PolarisChart{},
+		&PolarisDetection{},
+		&PolarisAlertPolicy{},
+		&FiremapHealthSnapshot{},
+		&FiremapDrillRule{},
+		&FiremapAlertRule{},
+		&FiremapTemplate{},
 		&ExternalAlertSource{},
 		&ExternalRule{},
 		&InspectionExpectation{},

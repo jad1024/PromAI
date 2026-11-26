@@ -40,9 +40,13 @@ const (
 	defaultDenoiseResourceLabels = "resource"
 )
 
-// incidentKey 故障的聚合主键：以 alertname 为主
+// incidentKey 故障的聚合主键：以 alertname + 生命周期状态为核心。
+// 参考 n9e「当前告警表只留 firing」的语义：告警中(ongoing)与已恢复(resolved)
+// 必须分成两个故障，否则同一 alertname 下有一条未恢复时，会把已恢复实例
+// 也塞进"告警中"的明细里（用户反馈的核心 bug）。
 type incidentKey struct {
 	Alertname string
+	State     string // ongoing / resolved
 }
 
 // incidentSupplements 补充指标：按 alertname（带 [源名] 前缀的 rule_name）预计算的
@@ -99,9 +103,9 @@ type incidentListItem struct {
 	Alertname     string    `json:"alertname"`
 	Severity      string    `json:"severity"`
 	State         string    `json:"state"`
-	AlertCount    int       `json:"alert_count"`     // 故障内告警数
-	InstanceCount int       `json:"instance_count"`  // 故障涉及的不重复实例数
-	ClusterCount  int       `json:"cluster_count"`   // 故障涉及的集群（数据源）数
+	AlertCount    int       `json:"alert_count"`    // 故障内告警数
+	InstanceCount int       `json:"instance_count"` // 故障涉及的不重复实例数
+	ClusterCount  int       `json:"cluster_count"`  // 故障涉及的集群（数据源）数
 	FirstFiredAt  time.Time `json:"first_fired_at"`
 	LastEventAt   time.Time `json:"last_event_at"`
 	Storm         bool      `json:"storm"`
@@ -119,18 +123,18 @@ type incidentListItem struct {
 // incidentDetailFull 内部使用的完整故障（带 alerts）
 // 注意：必须显式带 JSON tag，否则序列化为大写字段名导致前端解析失败。
 type incidentDetailFull struct {
-	Key           string             `json:"key"`
-	Alertname     string             `json:"alertname"`
-	Severity      string             `json:"severity"`
-	State         string             `json:"state"`
-	AlertCount    int                `json:"alert_count"`
-	InstanceCount int                `json:"instance_count"`
-	ClusterCount  int                `json:"cluster_count"`
-	FirstFiredAt  time.Time          `json:"first_fired_at"`
-	LastEventAt   time.Time          `json:"last_event_at"`
-	Storm         bool               `json:"storm"`
-	Datasources   []string           `json:"datasources"`
-	Alerts        []alertInIncident  `json:"alerts"`
+	Key           string              `json:"key"`
+	Alertname     string              `json:"alertname"`
+	Severity      string              `json:"severity"`
+	State         string              `json:"state"`
+	AlertCount    int                 `json:"alert_count"`
+	InstanceCount int                 `json:"instance_count"`
+	ClusterCount  int                 `json:"cluster_count"`
+	FirstFiredAt  time.Time           `json:"first_fired_at"`
+	LastEventAt   time.Time           `json:"last_event_at"`
+	Storm         bool                `json:"storm"`
+	Datasources   []string            `json:"datasources"`
+	Alerts        []alertInIncident   `json:"alerts"`
 	InstanceSet   map[string]struct{} `json:"-"` // 用于内部去重计数
 	// 补充指标（不影响现有 AlertCount/InstanceCount 计算，仅用于故障卡片展示）
 	PeakInstanceCount int `json:"peak_instance_count"`
@@ -234,9 +238,10 @@ func parseLabels(s string) map[string]string {
 }
 
 // extractInstance 从告警 labels 中按选中的键顺序提取「实例标识」：
-//   1) 按配置顺序（CSV 即优先级）取第一个非空值；
-//   2) 全部未命中时回退到常见实例标签（instance/host/pod/node/target）；
-//   3) 全缺失则返回 ""。
+//  1. 按配置顺序（CSV 即优先级）取第一个非空值；
+//  2. 全部未命中时回退到常见实例标签（instance/host/pod/node/target）；
+//  3. 全缺失则返回 ""。
+//
 // 提取结果用于下钻时定位「具体实例」，不作为故障聚合的主键。
 func extractInstance(labels map[string]string, keys []string) string {
 	if len(keys) == 0 {
@@ -247,7 +252,14 @@ func extractInstance(labels map[string]string, keys []string) string {
 			return v
 		}
 	}
-	for _, k := range []string{"instance", "host", "pod", "node", "target"} {
+	// 兜底维度：除 Prometheus 常见键外，覆盖华为云 CES / 阿里云 CMS 的字段。
+	// 华为云 SMN 告警的标签是 resource_name / private_ip / public_ip / resource_id /
+	// region 等，不含 instance，若这里不认，故障聚合的实例数会恒为 0。
+	for _, k := range []string{
+		"instance", "host", "pod", "node", "target", "ip", "device", "hostname",
+		"resource_name", "private_ip", "public_ip", "resource_id",
+		"instance_name", "instance_id", "ident",
+	} {
 		if v := labels[k]; v != "" {
 			return v
 		}
@@ -255,11 +267,14 @@ func extractInstance(labels map[string]string, keys []string) string {
 	return ""
 }
 
-// incidentHashKey 故障的稳定 key（用于前端下钻）。主键只含 alertname +
-// firstFiredAt：同一 alertname 的相邻告警落入同一 incident，跨故障不会冲突。
-func incidentHashKey(alertname string, firstFiredAt time.Time) string {
+// incidentHashKey 故障的稳定 key（用于前端下钻）。主键含 alertname + state +
+// firstFiredAt：同一 alertname 的 ongoing 与 resolved 是两个独立故障，必须靠
+// state 区分，否则前端按 key 下钻时两个故障会串到同一条。
+func incidentHashKey(alertname string, state string, firstFiredAt time.Time) string {
 	h := sha256.New()
 	h.Write([]byte(alertname))
+	h.Write([]byte{0})
+	h.Write([]byte(state))
 	h.Write([]byte{0})
 	h.Write([]byte(strconv.FormatInt(firstFiredAt.UnixNano(), 10)))
 	return hex.EncodeToString(h.Sum(nil))[:16]
@@ -380,8 +395,9 @@ func dedupToAlerts(rows []database.AlertHistory) []alertInstance {
 func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig, supplements map[string]incidentSupplements) []incidentDetailFull {
 	incidentsByKey := map[incidentKey][]*incidentDetailFull{}
 	for _, a := range alerts {
-		// 故障主键：alertname
-		k := incidentKey{Alertname: a.RuleName}
+		// 故障主键：alertname + 生命周期状态。
+		// ongoing 与 resolved 分开成组，避免"告警中"故障混入已恢复实例。
+		k := incidentKey{Alertname: a.RuleName, State: a.State}
 		list := incidentsByKey[k]
 		var inc *incidentDetailFull
 		if n := len(list); n > 0 {
@@ -414,9 +430,8 @@ func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig, supplements m
 			if a.LastEventAt.After(inc.LastEventAt) {
 				inc.LastEventAt = a.LastEventAt
 			}
-			if a.State == "ongoing" {
-				inc.State = "ongoing"
-			}
+			// 同组状态已一致（按 alertname+state 分组），不再用"任一条 ongoing 就把整组标 ongoing"，
+			// 否则 resolved 组的明细会被错误地标成告警中。
 			if sevRank(a.Severity) > sevRank(inc.Severity) {
 				inc.Severity = a.Severity
 			}
@@ -445,7 +460,7 @@ func aggregateIncidents(alerts []alertInstance, cfg denoiseConfig, supplements m
 	var all []*incidentDetailFull
 	for _, list := range incidentsByKey {
 		for _, inc := range list {
-			inc.Key = incidentHashKey(inc.Alertname, inc.FirstFiredAt)
+			inc.Key = incidentHashKey(inc.Alertname, inc.State, inc.FirstFiredAt)
 			inc.InstanceCount = len(inc.InstanceSet)
 			inc.ClusterCount = len(inc.Datasources)
 			if cfg.StormThreshold > 0 && inc.AlertCount > cfg.StormThreshold {
@@ -821,14 +836,14 @@ func (a *AdminAPI) handleAlertNoiseTop(w http.ResponseWriter, r *http.Request) {
 	all := aggregateIncidents(alerts, cfg, computeIncidentSupplements(rows))
 
 	type item struct {
-		Alertname     string   `json:"alertname"`
-		AlertCount    int      `json:"alert_count"`
-		InstanceCount int      `json:"instance_count"`
-		ClusterCount  int      `json:"cluster_count"`
-		Severity      string   `json:"severity"`
-		State         string   `json:"state"`
-		Storm         bool     `json:"storm"`
-		Datasources   []string `json:"datasources"`
+		Alertname     string    `json:"alertname"`
+		AlertCount    int       `json:"alert_count"`
+		InstanceCount int       `json:"instance_count"`
+		ClusterCount  int       `json:"cluster_count"`
+		Severity      string    `json:"severity"`
+		State         string    `json:"state"`
+		Storm         bool      `json:"storm"`
+		Datasources   []string  `json:"datasources"`
 		LastEventAt   time.Time `json:"last_event_at"`
 	}
 	items := make([]item, 0, len(all))

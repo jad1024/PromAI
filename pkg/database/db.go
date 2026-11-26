@@ -267,7 +267,7 @@ func ensureMetricCatalog(cfg *config.Config) error {
 				"sort_order":           payload.SortOrder,
 				"baseline_enabled":     payload.BaselineEnabled,
 				"baseline_window":      payload.BaselineWindow,
-				"baseline_zscore":      payload.BaselineZScore,
+				"baseline_z_score":     payload.BaselineZScore,
 				"baseline_min_samples": payload.BaselineMinSamples,
 				"warning_enabled":      payload.WarningEnabled,
 				"warning_margin":       payload.WarningMargin,

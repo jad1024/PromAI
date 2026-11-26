@@ -290,6 +290,7 @@ func (t *AnalyzeAlertTool) Execute(ctx context.Context, params map[string]any, o
 	lines = append(lines, "📋 最近相关巡检记录:")
 	var records []ReportRecord
 	t.db.Model(&ReportRecord{}).
+		Select("id, datasource_name, critical_count, warning_count, created_at").
 		Where("datasource_name LIKE ? AND (critical_count > 0 OR warning_count > 0)", "%"+promURL+"%").
 		Order("created_at desc").
 		Limit(3).

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -685,12 +686,23 @@ func (a *AdminAPI) handleAlertHistorySessions(w http.ResponseWriter, r *http.Req
 		k := "%" + v + "%"
 		q = q.Where("rule_name LIKE ? OR datasource_name LIKE ? OR labels_json LIKE ?", k, k, k)
 	}
+	// 注意：SQLite 中 MAX(COALESCE(occurred_at, created_at)) 聚合后列类型信息丢失，
+	// driver 只会返回 string。若这里声明为 time.Time，GORM 会报
+	// "unsupported Scan, storing driver.Value type string into type *time.Time"，
+	// 每一行都失败（rows 数量仍正确，但 ResolvedAt 全为零值）。
+	// 因此按 string 接收，再用 parseSQLiteTime 宽容解析。
 	type fpRow struct {
 		Fingerprint string
-		ResolvedAt  time.Time
+		ResolvedAt  string
 	}
 	var fps []fpRow
-	q.Group("fingerprint").Order("resolved_at desc").Scan(&fps)
+	if err := q.Group("fingerprint").Order("resolved_at desc").Scan(&fps).Error; err != nil {
+		// 原实现忽略了 Scan 错误，导致上面那类类型不匹配问题静默发生（日志只打 GORM 警告，
+		// 但接口仍返回 200、数据却不完整）。这里显式记录，便于后续发现。
+		log.Printf("[AlertHistory] 会话聚合查询失败: %v", err)
+		writeJSON(w, map[string]interface{}{"items": []HistorySession{}, "total": 0, "page": 1, "page_size": 50, "error": err.Error()})
+		return
+	}
 	total := len(fps)
 
 	page, _ := strconv.Atoi(params.Get("page"))
@@ -777,11 +789,12 @@ func (a *AdminAPI) handleAlertHistorySessions(w http.ResponseWriter, r *http.Req
 		if s == nil {
 			continue
 		}
-		// SQL 聚合值仅在有效（非零）且更晚时采用；零值说明旧数据异常，保留内存兜底结果
-		if !f.ResolvedAt.IsZero() && f.ResolvedAt.Year() > 1970 {
-			if s.ResolvedAt == nil || f.ResolvedAt.After(*s.ResolvedAt) {
-				rt := f.ResolvedAt
-				s.ResolvedAt = &rt
+		// SQL 聚合值（字符串）解析成功后，仅在有效且更晚时采用；
+		// 解析失败说明是旧数据/异常格式，保留内存兜底结果。
+		if rt, ok := parseSQLiteTime(f.ResolvedAt); ok && rt.Year() > 1970 {
+			if s.ResolvedAt == nil || rt.After(*s.ResolvedAt) {
+				t := rt
+				s.ResolvedAt = &t
 			}
 		}
 		// 兜底：仍无有效恢复时间时退回 CreatedAt，避免 0001-01-01
@@ -823,6 +836,36 @@ func historyEffectiveAt(h database.AlertHistory) time.Time {
 		return h.CreatedAt
 	}
 	return h.OccurredAt
+}
+
+// parseSQLiteTime 宽容解析 SQLite 聚合列（MAX/COALESCE）返回的时间字符串。
+// go-sqlite3 在聚合表达式上丢失列类型，会返回形如
+// "2026-11-25 02:53:08.51+00:00"、"2026-11-25 02:53:08.51"、
+// "2026-11-25T02:53:08Z" 等多种历史数据格式；逐一尝试常见 layout。
+func parseSQLiteTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	layouts := []string{
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05.999999999Z07:00",
+		"2006-01-02T15:04:05Z07:00",
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // ===== AlertHistory Timeline =====================================================

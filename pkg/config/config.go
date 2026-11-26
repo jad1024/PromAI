@@ -48,6 +48,14 @@ type Config struct {
 	} `yaml:"notifications"`
 	Port string   `yaml:"port"`
 	AI   AIConfig `yaml:"ai"`
+
+	// VictoriaLogs 日志分析（可用环境变量 PROMAI_VICTORIALOGS_URL 覆盖）
+	LogAnalysis struct {
+		VictoriaLogs struct {
+			URL     string `yaml:"url"`
+			Timeout string `yaml:"timeout"`
+		} `yaml:"victorialogs"`
+	} `yaml:"log_analysis"`
 }
 
 type DataSource struct {

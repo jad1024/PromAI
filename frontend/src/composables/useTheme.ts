@@ -12,7 +12,7 @@ interface ThemeOption {
 
 export const themeOptions: ThemeOption[] = [
   { value: 'dark', label: '深邃暗色', icon: '🌙', desc: '深色背景，护眼低功耗', builtin: true },
-  { value: 'light', label: '明亮浅色', icon: '☀️', desc: '浅色背景，清晰明亮', builtin: true },
+  { value: 'light', label: 'PromAI 浅色', icon: '☀️', desc: '白色侧栏 / 紫色主色（平台默认）', builtin: true },
   { value: 'cyber', label: '赛博霓虹', icon: '💠', desc: '霓虹高饱和，赛博朋克风格', builtin: true },
   { value: 'minimal', label: '极简白', icon: '⬜', desc: '纯白极简，干净利落', builtin: true },
   { value: 'custom', label: '自定义', icon: '🎨', desc: '基于主色自动生成专属主题', builtin: false },
@@ -20,6 +20,9 @@ export const themeOptions: ThemeOption[] = [
 
 const STORAGE_KEY = 'promai_theme'
 const CUSTOM_KEY = 'promai_custom_theme'
+// Flashcat 换壳一次性迁移标记：首次加载强制切到 Flashcat 浅色，
+// 之后尊重用户自己在主题下拉里的选择。
+const SHELL_MIGRATE_KEY = 'promai_flashcat_shell_v2'
 
 /** 自定义主题变量清单：键名 = CSS 变量名（不含 --） */
 export interface CustomTheme {
@@ -64,12 +67,19 @@ export function hexToRgba(hex: string, alpha: number): string {
 
 function loadTheme(): ThemeName {
   try {
+    const migrated = localStorage.getItem(SHELL_MIGRATE_KEY)
     const saved = localStorage.getItem(STORAGE_KEY)
+    if (!migrated) {
+      // 换壳后首次加载：忽略旧的深色偏好，统一切到 Flashcat 浅色
+      localStorage.setItem(SHELL_MIGRATE_KEY, '1')
+      localStorage.setItem(STORAGE_KEY, 'light')
+      return 'light'
+    }
     if (saved && ['dark', 'light', 'cyber', 'minimal', 'custom'].includes(saved)) {
       return saved as ThemeName
     }
   } catch {}
-  return 'dark'
+  return 'light'
 }
 
 function loadCustom(): CustomTheme {

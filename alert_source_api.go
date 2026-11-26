@@ -31,8 +31,6 @@ import (
 	"PromAI/pkg/database"
 	"PromAI/pkg/notify"
 	piagent "PromAI/pkg/pi-agent"
-
-	"gorm.io/gorm"
 )
 
 // secureTokenEqual 常量时间比较两个 token，避免时序侧信道攻击。
@@ -191,8 +189,13 @@ func upsertExternalAlert(ctx context.Context, ev *webhook.AlertEvent, source *da
 	annotationsJSON, _ := json.Marshal(ev.Annotations)
 
 	var inst database.AlertInstance
-	err := database.DB.Where("fingerprint = ?", fp).First(&inst).Error
-	if err == gorm.ErrRecordNotFound {
+	// 用 Limit(1).Find 判断是否存在，避免 First() 未命中时 GORM 打印
+	// "record not found" 错误日志（生产日志里每次新告警都刷一条，属于噪音）。
+	res := database.DB.Where("fingerprint = ?", fp).Limit(1).Find(&inst)
+	if res.Error != nil {
+		return fmt.Errorf("查询外部告警实例失败: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
 		inst = database.AlertInstance{
 			Fingerprint:      fp,
 			RuleID:           linkedRuleID,
@@ -286,11 +289,15 @@ func upsertExternalAlert(ctx context.Context, ev *webhook.AlertEvent, source *da
 // resolveExternalAlert 结束外部告警：更新实例为 resolved + 追加恢复历史
 func resolveExternalAlert(ctx context.Context, ev *webhook.AlertEvent, source *database.ExternalAlertSource, fp string, now time.Time) error {
 	var inst database.AlertInstance
-	err := database.DB.Where("fingerprint = ?", fp).First(&inst).Error
+	// 同上：改用 Find 判断存在性，避免 First() 的 "record not found" 日志噪音。
+	findRes := database.DB.Where("fingerprint = ?", fp).Limit(1).Find(&inst)
+	if findRes.Error != nil {
+		return fmt.Errorf("查询外部告警实例失败: %w", findRes.Error)
+	}
 	labelsJSON, _ := json.Marshal(ev.Labels)
 	annotationsJSON, _ := json.Marshal(ev.Annotations)
 
-	if err == nil && (inst.State == "firing" || inst.State == "pending") {
+	if findRes.RowsAffected > 0 && (inst.State == "firing" || inst.State == "pending") {
 		if e := database.DB.Model(&database.AlertInstance{}).Where("fingerprint = ?", fp).
 			Updates(map[string]interface{}{
 				"state":        "resolved",
@@ -301,7 +308,7 @@ func resolveExternalAlert(ctx context.Context, ev *webhook.AlertEvent, source *d
 			return fmt.Errorf("结束外部告警失败: %w", e)
 		}
 		log.Printf("[ExternalWebhook] 外部告警恢复 fp=%s rule=%s", fp[:12], ev.RuleName)
-	} else if err == gorm.ErrRecordNotFound {
+	} else if findRes.RowsAffected == 0 {
 		log.Printf("[ExternalWebhook] 收到恢复事件但无活跃实例 fp=%s（忽略）", fp[:12])
 		return nil
 	}

@@ -385,7 +385,8 @@ func (t *QueryTaskTool) Execute(ctx context.Context, params map[string]any, onUp
 	if task.Status == "completed" && task.ReportURL != "" {
 		filename := strings.TrimPrefix(task.ReportURL, "/api/promai/reports/")
 		var r ReportRecord
-		if t.parent.db.Model(&ReportRecord{}).Where("file_path LIKE ?", "%"+filename).First(&r).Error() == nil {
+		if t.parent.db.Model(&ReportRecord{}).Select("id, status, file_path").
+			Where("file_path LIKE ?", "%"+filename).First(&r).Error() == nil {
 			statusText := map[string]string{
 				"success": "✅ 正常",
 				"danger":  "🔴 高危",

@@ -35,39 +35,41 @@
   --grid-line: rgba(56, 189, 248, 0.03);
 }
 
+/* Flashcat 换壳主题：白色侧栏 / 紫色主色 / 浅灰内容区。
+   沿用 light 主题名，使现有 26 个页面里的浅色判定（ECharts 等）天然生效。 */
 [data-theme="light"] {
-  --bg-primary: #f8fafc;
-  --bg-secondary: #f1f5f9;
+  --bg-primary: #f4f5f8;
+  --bg-secondary: #ffffff;
   --bg-card: #ffffff;
-  --bg-card-hover: #f8fafc;
-  --bg-elevated: #f1f5f9;
-  --border: rgba(59, 130, 246, 0.15);
-  --border-glow: rgba(59, 130, 246, 0.3);
-  --cyan: #3b82f6;
-  --cyan-dim: rgba(59, 130, 246, 0.08);
-  --purple: #7c3aed;
-  --purple-dim: rgba(124, 58, 237, 0.08);
-  --emerald: #10b981;
-  --emerald-dim: rgba(16, 185, 129, 0.08);
-  --amber: #f59e0b;
-  --amber-dim: rgba(245, 158, 11, 0.08);
-  --red: #ef4444;
-  --red-dim: rgba(239, 68, 68, 0.08);
-  --blue: #3b82f6;
-  --pink: #ec4899;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-tertiary: #64748b;
-  --text-inverse: #f8fafc;
-  --sidebar-width: 260px;
-  --header-height: 64px;
-  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.08);
-  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.06);
+  --bg-card-hover: #fafbfc;
+  --bg-elevated: #ffffff;
+  --border: #e8eaee;
+  --border-glow: #e6dcf7;
+  --cyan: #6d4bc4;
+  --cyan-dim: #f2eefb;
+  --purple: #7c5cd6;
+  --purple-dim: #f2eefb;
+  --emerald: #3fb37f;
+  --emerald-dim: #eaf8f1;
+  --amber: #e0a026;
+  --amber-dim: #fdf6e8;
+  --red: #e8635a;
+  --red-dim: #fef0ef;
+  --blue: #3a7bd5;
+  --pink: #d4569b;
+  --text-primary: #1f2329;
+  --text-secondary: #5c6470;
+  --text-tertiary: #9aa1ac;
+  --text-inverse: #ffffff;
+  --sidebar-width: 196px;
+  --header-height: 50px;
+  --shadow-glow: 0 1px 4px rgba(109, 75, 196, 0.12);
+  --shadow-card: 0 3px 12px rgba(31, 35, 41, 0.08);
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
-  --primary-hover: #60a5fa;
-  --primary-active: #2563eb;
-  --grid-line: rgba(59, 130, 246, 0.04);
+  --primary-hover: #7c5cd6;
+  --primary-active: #5b3fb0;
+  --grid-line: rgba(109, 75, 196, 0.03);
 }
 
 [data-theme="cyber"] {
@@ -688,37 +690,38 @@ body {
   display: inline-flex;
   align-items: center;
   margin: 1px 4px 1px 0;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 6px;
   font-size: 12px;
   font-family: 'SF Mono', Monaco, monospace;
   background: var(--cyan-dim);
   color: var(--cyan);
   max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 标签值可能很长（如华为云 resource_name "xxx-node-0001 > python3"），
+     不再用省略号截断，改为自动换行完整展示；:title 仍保留完整 k=v。
+     需要覆盖 element-plus .el-tag 的固定 height 与 nowrap。 */
+  height: auto !important;
+  min-height: 22px;
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.45;
   vertical-align: middle;
 }
-.label-pill .pill-k { color: var(--text-tertiary); margin-right: 4px; }
+.label-pill .pill-k { color: var(--text-tertiary); margin-right: 4px; flex-shrink: 0; }
 .label-pill .pill-v { color: var(--cyan); }
 
-/* 标签行：当一格放不下时整体允许换行 + 限制最大可见行数 */
+/* 标签行：允许全部标签换行完整展示，不再裁掉超出部分。
+   标签特别多时容器内滚动查看全部（而不是 hidden 直接丢弃）。 */
 .label-stack {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  max-height: 56px;
-  overflow: hidden;
+  max-height: 180px;
+  overflow-y: auto;
   position: relative;
-}
-.label-stack::after {
-  content: '';
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 12px;
-  background: linear-gradient(180deg, transparent, var(--bg-card));
-  pointer-events: none;
 }
 
 /* ===== 表格操作列：图标按钮组更紧凑 ===== */

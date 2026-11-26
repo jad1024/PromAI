@@ -367,4 +367,321 @@ export const getPortScanPorts = () => api.get<{ items: PortInfo[] }>('/portscan/
 export const downloadPortScanReport = (id: number) =>
   api.get(`/portscan/tasks/${id}/export`, { responseType: 'blob' })
 
+// ===== Flashcat 场景层（v2：可配置服务树 / 定向检查 / 北极星 / 事件墙） ==============
+export interface FCObject {
+  id: string
+  node_id: number
+  name: string
+  path: string
+  level: string
+  parent_id: number
+  datasource_id: number
+  datasource: string
+  instance: string
+  layer: string
+  health_score: number
+  status: string
+  total_checks: number
+  critical: number
+  warning: number
+  normal: number
+  alerts: number
+  metrics: number
+  no_data: boolean
+  last_check_at?: string
+}
+export interface FCLayer {
+  name: string
+  count: number
+  critical: number
+  warning: number
+  normal: number
+  avg_score: number
+}
+export interface FCTreeNode {
+  id: string
+  node_id: number
+  name: string
+  level: string
+  count: string
+  health_score: number
+  status: string
+  children?: FCTreeNode[]
+  object_id?: string
+}
+export interface FCStats {
+  total: number
+  critical: number
+  warning: number
+  normal: number
+  no_data: number
+}
+export interface FCDatasource { id: number; name: string }
+export interface FCBootstrap {
+  has_data: boolean
+  overall_health: number
+  objects: FCObject[]
+  layers: FCLayer[]
+  tree: FCTreeNode
+  stats: FCStats
+  last_report_at?: string
+  datasources: FCDatasource[]
+  message?: string
+}
+export interface FCCheckItem {
+  key: string
+  name: string
+  check_type: string
+  status: string
+  result: string
+  detail: string
+  cost_ms: number
+}
+export interface FCChecksResponse {
+  checks: FCCheckItem[]
+  health_score: number
+  status: string
+  path: string
+  node_id: number
+}
+export interface FCAIResponse {
+  success: boolean
+  text?: string
+  model?: string
+  ref_id?: string
+  at?: string
+  error?: string
+  prompt?: string
+  checks?: FCCheckItem[]
+}
+export interface FCPolarisItem {
+  id: number
+  node_id: number
+  name: string
+  description: string
+  target: number
+  current: number
+  error_budget: number
+  status: string
+  window_days: number
+  trend: number[]
+}
+export interface FCEventItem {
+  id: string
+  node_id: number
+  node_name: string
+  source: string
+  severity: string
+  title: string
+  detail: string
+  status: string
+  at: string
+}
+export interface FCNode {
+  id?: number
+  parent_id: number
+  parent_name?: string
+  name: string
+  level: string
+  datasource_id: number
+  datasource?: string
+  instance: string
+  sort_order: number
+  remark?: string
+}
+export interface FCCheckConfig {
+  id?: number
+  key: string
+  name: string
+  enabled: boolean
+  sort_order: number
+  check_type: string
+  promql: string
+  threshold: number
+  compare_op: string
+  unit: string
+  remark?: string
+}
+
+const fcNode = (v: number | string) => (typeof v === 'string' ? v.replace(/^n/, '') : v)
+
+export const getFiremapObjects = (datasourceId?: number) =>
+  api.get<FCBootstrap>('/firemap/objects', { params: datasourceId ? { datasource_id: datasourceId } : {} })
+export const getFiremapObject = (node: number | string) =>
+  api.get<{
+    object: FCObject; path: string; alerts: any[]; metrics: any[]; checks: any[]
+    conclusion?: string; conclusion_model?: string; conclusion_at?: string
+  }>('/firemap/object', { params: { node: fcNode(node) } })
+export const runFiremapChecks = (node: number | string) =>
+  api.get<FCChecksResponse>('/firemap/checks', { params: { node: fcNode(node) } })
+export const triggerFiremapAIAnalyze = (payload: { node_id: number; prompt?: string }) =>
+  api.post<FCAIResponse>('/firemap/ai-analyze', payload)
+export const getFiremapPolaris = () =>
+  api.get<{ items: FCPolarisItem[]; overall: number }>('/firemap/polaris')
+export interface FiremapEventsParams {
+  hours?: number      // 相对时间快捷：1/6/24/168；0 或不传 = 不限
+  since?: string      // 显式起始（'YYYY-MM-DD HH:mm:ss' 或 ISO8601），优先于 hours
+  until?: string      // 显式结束
+  limit?: number      // 最多返回条数，默认 300，上限 500
+}
+export const getFiremapEvents = (params?: FiremapEventsParams) =>
+  api.get<{ events: FCEventItem[]; total?: number; since?: string; until?: string }>('/firemap/events', { params })
+export const getFiremapNodes = () =>
+  api.get<{ nodes: FCNode[]; datasources: { id: number; name: string }[] }>('/firemap/nodes')
+export const saveFiremapNode = (node: FCNode) =>
+  api.post<{ success: boolean; node: FCNode }>('/firemap/nodes', node)
+export const deleteFiremapNode = (id: number) =>
+  api.delete('/firemap/nodes', { params: { id } })
+export const seedFiremapNodes = () =>
+  api.post<{ success: boolean; created: number; message: string }>('/firemap/seed')
+export const getFiremapCheckConfigs = () =>
+  api.get<{ configs: FCCheckConfig[] }>('/firemap/check-config')
+export const saveFiremapCheckConfig = (cfg: FCCheckConfig) =>
+  api.post<{ success: boolean; config: FCCheckConfig }>('/firemap/check-config', cfg)
+export const deleteFiremapCheckConfig = (id: number) =>
+  api.delete('/firemap/check-config', { params: { id } })
+export const getAllDataSourcesSimple = () => api.get<any[]>('/datasources/all')
+
 export default api
+
+// ===== 日志分析 / 链路分析（VictoriaLogs） =====================================
+export interface LogEntry {
+  _time?: string
+  _msg?: string
+  [key: string]: any
+}
+export interface LogQueryResponse {
+  logs: LogEntry[]
+  total: number
+  elapsed_ms: number
+  fields: string[]
+  query: string
+  configured: boolean
+  error?: string
+}
+export interface LogHitsResponse {
+  timestamps: string[]
+  values: number[]
+  total: number
+}
+export interface LogFieldValue { value: string; count: number }
+
+export const getLogStatus = () => api.get<{ configured: boolean }>('/log/status')
+export const queryLogs = (p: { q: string; start?: string; end?: string; limit?: number; offset?: number; sort?: string }) =>
+  api.get<LogQueryResponse>('/log/query', { params: p })
+export const getLogHits = (p: { q: string; start?: string; end?: string; step?: string }) =>
+  api.get<LogHitsResponse>('/log/hits', { params: p })
+export const getLogFieldValues = (p: { q: string; field: string; start?: string; end?: string; limit?: number }) =>
+  api.get<{ field: string; values: LogFieldValue[] }>('/log/fields', { params: p })
+
+export interface TraceItem { trace_id: string; service: string; last_at: string; message: string; field?: string }
+export interface TraceSpan {
+  trace_id: string; span_id?: string; service: string; method?: string
+  level?: string; message: string; time: string; raw: Record<string, any>
+}
+export const getRecentTraces = (p?: { start?: string; end?: string; field?: string }) =>
+  api.get<{ items: TraceItem[]; count: number; field?: string }>('/trace/recent', { params: p || {} })
+export const getTraceByID = (id: string, p?: { start?: string; end?: string; field?: string }) =>
+  api.get<{ trace_id: string; spans: TraceSpan[]; count: number }>('/trace/by-id', { params: { id, ...(p || {}) } })
+
+// ===== 北极星（Polaris）：业务核心指标故障发现入口 =====
+export interface PBusinessView {
+  id: number; name: string; description: string; owner: string; team: string
+  icon: string; color: string; datasource_id: number; enabled: boolean; sort_order: number
+  chart_count: number; alert_count: number; health: number; status: string
+}
+export interface PMetricPoint { t: number; v: number }
+export interface PChartSeries { name: string; points: PMetricPoint[] }
+export interface PChartView {
+  id: number; business_id: number; name: string; chart_type: string
+  metric_ids: number[]; metric_names: string[]; custom_promql: string; unit: string
+  enabled: boolean; sort_order: number; series: PChartSeries[]; status: string; last_value: number
+}
+export interface PDetectionView {
+  id: number; business_id: number; chart_id: number; metric_id: number
+  detect_type: string; threshold: number; compare_op: string; duration_min: number
+  sensitivity: number; enabled: boolean; triggered: boolean; reason: string; last_value: number
+}
+export interface PPolicyView {
+  id: number; business_id: number; name: string; severity: string; enabled: boolean
+  active_from: string; active_to: string; notify_target: string; firemap_node_id: number
+}
+export interface PMetricPoolItem { id: number; name: string; query: string; unit: string; type: string; threshold: number }
+export interface PBusinessDetail {
+  business: PBusinessView; charts: PChartView[]; detections: PDetectionView[]
+  policies: PPolicyView[]; slos: FCPolarisItem[]; has_datasource: boolean
+}
+export const getPolarisBusinesses = () => api.get<{ items: PBusinessView[] }>('/polaris/businesses')
+export const getPolarisBusiness = (id: number) => api.get<PBusinessDetail>('/polaris/business', { params: { id } })
+export const getPolarisMetricPool = () => api.get<{ items: PMetricPoolItem[] }>('/polaris/metric-pool')
+export const polarisCRUD = (kind: string, data: Record<string, any>) =>
+  api.post<{ success: boolean; id: number }>(`/polaris/crud?kind=${kind}`, data)
+export const polarisDelete = (kind: string, id: number) =>
+  api.delete(`/polaris/crud?kind=${kind}&id=${id}`)
+
+// ===== 灭火图下钻规则 / 告警规则 / 时间轴 =====
+export interface FCDrillRule { id: number; node_id: number; name: string; target_type: string; target_url: string; query: string; enabled: boolean; sort_order: number }
+export interface FCAlertRule { id: number; node_id: number; name: string; condition: string; score_below: number; enabled: boolean; notify_target: string; last_fired_at?: string }
+export interface FCHealthPoint { t: number; score: number; status: string; critical: number; warning: number; alerts: number }
+export const getFiremapDrillRules = (nodeId: number) => api.get<{ items: FCDrillRule[] }>('/firemap/rule', { params: { kind: 'drill', node_id: nodeId } })
+export const getFiremapAlertRules = () => api.get<{ items: FCAlertRule[] }>('/firemap/rule', { params: { kind: 'alert' } })
+export const firemapCRUDRule = (kind: string, data: Record<string, any>) =>
+  api.post<{ success: boolean; id: number }>(`/firemap/rule?kind=${kind}`, data)
+export const firemapDeleteRule = (kind: string, id: number) =>
+  api.delete(`/firemap/rule?kind=${kind}&id=${id}`)
+export const getFiremapTimeline = (nodeId?: number, minutes?: number) =>
+  api.get<{ points: FCHealthPoint[] }>('/firemap/timeline', { params: { node_id: nodeId, minutes } })
+export const getFiremapTemplates = (datasourceId?: number) => api.get<{ items: any[] }>('/firemap/templates', { params: datasourceId ? { datasource_id: datasourceId } : {} })
+export const applyFiremapTemplate = (templateId: number, datasourceId: number) =>
+  api.post<{ created: number; message: string }>('/firemap/template-apply', { template_id: templateId, datasource_id: datasourceId })
+
+// ===== PromAI 核心链路 + AI 效果评估 =====
+export interface PipelineStage {
+  key: string; name: string; desc: string; count: number; link: string
+}
+export interface PipelineOverview {
+  days: number; stages: PipelineStage[]; alert_firing: number
+  ai_success: number; ai_cron_jobs: number; total_sources: number; total_alerts: number
+}
+export interface AIFeedback {
+  id: number; analysis_id: number; ref_id: string; verdict: string; note: string
+  alerts_before: number; alerts_after: number; operator: string; created_at: string
+}
+export interface AIEffectiveness {
+  days: number; confirmed: number; invalid: number; pending: number; total: number
+  confirm_rate: number; avg_alert_drop: number
+}
+export const getPipelineOverview = (days = 7) =>
+  api.get<PipelineOverview>('/pipeline/overview', { params: { days } })
+export const getAIFeedbacks = (params?: { analysis_id?: number; ref_id?: string }) =>
+  api.get<{ items: AIFeedback[] }>('/ai/feedback', { params })
+export const submitAIFeedback = (data: Partial<AIFeedback>) =>
+  api.post<AIFeedback>('/ai/feedback', data)
+export const getAIEffectiveness = (days = 30) =>
+  api.get<AIEffectiveness>('/ai/effectiveness', { params: { days } })
+
+// ===== 反馈来源候选 + 记录批量清理 =====
+export interface FeedbackSource {
+  type: 'inspection' | 'alert' | 'diagnosis' | string
+  id: string
+  label: string
+  created_at: string
+}
+export const getAIFeedbackSources = () =>
+  api.get<{ items: FeedbackSource[] }>('/ai/feedback/sources')
+
+export interface CleanupPayload {
+  ids?: number[]
+  keep_recent?: number
+  older_than_days?: number
+  confirm: boolean
+}
+export interface CleanupResult {
+  deleted: number
+  scanned: number
+  files_removed?: number
+}
+export const batchDeleteReports = (payload: CleanupPayload) =>
+  api.post<CleanupResult>('/report-records/batch-delete', payload)
+export const batchDeleteInspectRecords = (payload: CleanupPayload) =>
+  api.post<CleanupResult>('/inspect/records/batch-delete', payload)

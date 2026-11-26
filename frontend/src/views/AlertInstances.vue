@@ -181,11 +181,12 @@
             <span class="firing-count">{{ row.firing_count || 0 }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="isVisible('labels')" label="标签" min-width="220">
+        <el-table-column v-if="isVisible('labels')" label="标签" min-width="280">
           <template #default="{ row }">
             <div class="label-stack">
-              <el-tag v-for="(v, k) in row.labels || {}" :key="k" size="small" class="label-pill" :title="`${k}=${v}`">
-                <span class="pill-k">{{ k }}=</span><span class="pill-v">{{ v }}</span>
+              <el-tag v-for="l in sortedLabels(row.labels)" :key="l.k" size="small"
+                class="label-pill" :class="{ 'label-key': l.key }" :title="`${l.k}=${l.v}`">
+                <span class="pill-k">{{ l.k }}=</span><span class="pill-v">{{ l.v }}</span>
               </el-tag>
             </div>
           </template>
@@ -260,7 +261,10 @@
                 </span>
                 <span v-if="isVisible('firingCount') && (row.firing_count || 0) > 0" class="meta-count">触发 {{ row.firing_count }} 次</span>
                 <template v-if="isVisible('labels')">
-                  <el-tag v-for="(v, k) in row.labels || {}" :key="k" size="small" class="event-label-tag">{{ k }}={{ v }}</el-tag>
+                  <el-tag v-for="l in sortedLabels(row.labels)" :key="l.k" size="small"
+                    class="event-label-tag" :class="{ 'label-key': l.key }" :title="`${l.k}=${l.v}`">
+                    {{ l.k }}={{ l.v }}
+                  </el-tag>
                 </template>
               </div>
               <div v-if="isVisible('trend') && trends[row.fingerprint]?.length" class="card-trend">
@@ -454,7 +458,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import * as echarts from 'echarts'
+import * as echarts from '../utils/echarts'
 import dayjs from 'dayjs'
 import Sparkline from '../components/Sparkline.vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
@@ -890,6 +894,24 @@ function formatNum(v: number | null | undefined) {
   if (Math.abs(v) >= 100) return Number(v).toFixed(2)
   return Number(v).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
 }
+
+// 关键标签（定位告警对象用）优先展示并高亮，其余标签次要显示。
+// 参考 n9e：标签字典化 + 确定性排序，让可用信息一目了然。
+// 关键标签（定位告警对象用）优先展示并高亮。除 Prometheus 常见维度外，
+// 也纳入华为云 CES 的维度键，否则华为云告警的关键信息会排在后面且不高亮。
+const KEY_LABELS = [
+  'alertname', 'instance', 'host', 'pod', 'node', 'ip', 'job', 'namespace', 'service', 'ident', 'resource',
+  'resource_name', 'resource_id', 'private_ip', 'public_ip', 'region', 'region_id', 'metric',
+]
+function sortedLabels(labels: Record<string, any> | null | undefined): { k: string; v: string; key: boolean }[] {
+  if (!labels) return []
+  return Object.keys(labels)
+    .map(k => ({ k, v: String(labels[k]), key: KEY_LABELS.includes(k.toLowerCase()) }))
+    .sort((a, b) => {
+      if (a.key !== b.key) return a.key ? -1 : 1
+      return a.k.localeCompare(b.k)
+    })
+}
 function formatTime(t: string | null | undefined) {
   if (!t) return '-'
   const d = dayjs(t)
@@ -1249,7 +1271,16 @@ onBeforeUnmount(() => {
 .val-dim { color: var(--text-tertiary); font-family: 'SF Mono', Monaco, monospace; font-size: 12px; }
 .firing-count { color: var(--amber); font-weight: 600; font-size: 13px; }
 .time-cell { font-size: 12px; color: var(--text-tertiary); font-family: 'SF Mono', Monaco, monospace; }
-.label-pill { margin: 0; }
+.label-pill { margin: 0; font-size: 12px; }
+.label-pill .pill-k { opacity: 0.65; }
+.label-pill .pill-v { font-weight: 600; }
+/* 关键定位标签：高对比底色 + 加粗，和普通标签拉开层次 */
+.label-pill.label-key {
+  background: rgba(99, 102, 241, 0.16);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+.label-pill.label-key .pill-k { opacity: 0.9; color: #6366f1; }
+.label-pill.label-key .pill-v { color: #4338ca; }
 .tag-silence { background: rgba(96, 165, 250, 0.15); color: #60a5fa; border: none; }
 .tag-inhibit { background: rgba(251, 191, 36, 0.15); color: #fbbf24; border: none; }
 
@@ -1369,6 +1400,19 @@ onBeforeUnmount(() => {
   color: #818cf8;
   border: none;
   font-family: 'SF Mono', Monaco, monospace;
+  /* 与表格标签一致：长值自动换行完整展示，不被 el-tag 固定高度裁掉 */
+  height: auto !important;
+  min-height: 22px;
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.event-label-tag.label-key {
+  background: rgba(99, 102, 241, 0.18);
+  color: #4338ca;
+  font-weight: 700;
+  border: 1px solid rgba(99, 102, 241, 0.35);
 }
 .event-actions {
   flex-shrink: 0;

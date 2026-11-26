@@ -120,7 +120,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Close, QuestionFilled } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
+import * as echarts from '../utils/echarts'
 import api, { getAISkills, createAISkill, updateAISkill, deleteAISkill } from '../api'
 import type { AiSkill } from '../types'
 

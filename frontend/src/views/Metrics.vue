@@ -43,7 +43,7 @@
         </el-table-column>
         <el-table-column prop="query" label="PromQL" min-width="280">
           <template #default="{ row }">
-            <code style="font-size: 11px; background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 6px; color: var(--text-tertiary); display: block; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.query }}</code>
+            <code style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 500; background: rgba(109,75,196,0.10); padding: 3px 8px; border-radius: 6px; color: var(--text-primary); display: block; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.query }}</code>
           </template>
         </el-table-column>
         <el-table-column label="阈值 / 基线" width="200">

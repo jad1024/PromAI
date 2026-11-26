@@ -147,10 +147,13 @@ func TestDifferentAlertnameDifferentIncident(t *testing.T) {
 
 func TestWindowSlicing(t *testing.T) {
 	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	// 本用例只测「时间窗口切分」，两条样本统一为同一状态（ongoing），
+	// 避免混入状态差异这一无关变量。ongoing/resolved 分离由
+	// TestAggregateIncidentsSeparatesOngoingAndResolved 单独覆盖。
 	alerts := []alertInstance{
 		{
 			Fingerprint: "fp-a", RuleID: 1, RuleName: "CPU高", DatasourceID: 1, DatasourceName: "cluster-a",
-			Severity: "warning", State: "resolved", FirstFiredAt: base, LastEventAt: base.Add(5 * time.Minute),
+			Severity: "warning", State: "ongoing", FirstFiredAt: base, LastEventAt: base.Add(5 * time.Minute),
 			Labels: map[string]string{"instance": "10.0.0.1:9100"},
 		},
 		{
@@ -218,20 +221,87 @@ func TestExtractInstancePriority(t *testing.T) {
 	}
 }
 
+// TestExtractInstanceHuaweiLabels 回归「华为云告警聚合显示 0 实例」：
+// 华为云 CES/SMN 告警的 labels 是 instance/private_ip/resource_name/resource_id，
+// 不含默认 resource 键。extractInstance 必须能从这些维度取到实例标识，
+// 否则 InstanceSet 恒为空 → 故障卡片显示「0 实例」。
+func TestExtractInstanceHuaweiLabels(t *testing.T) {
+	labels := map[string]string{
+		"alarm_rule_name": "alarm-proccess",
+		"metric":          "(Agent) 指定进程数",
+		"namespace":       "主机监控",
+		"private_ip":      "10.8.3.48",
+		"resource_name":   "TransactionDataBackFutures-node-0001 > python3",
+		"resource_id":     "953b9b78-a83c-4604-9f71-ef6bbbfdb50e，进程：6e8efbe3a442748b716644025479aab5",
+		"region":          "华北-北京四",
+		"region_id":       "cn-north-4",
+	}
+	// 默认配置 keys=["resource"]，全部未命中，走兜底维度
+	got := extractInstance(labels, []string{"resource"})
+	if got == "" {
+		t.Fatalf("华为云标签应能提取到实例标识，实际为空（会导致 0 实例）")
+	}
+	// 解析器已补标准 instance 标签时，优先命中它
+	labels["instance"] = labels["private_ip"]
+	got2 := extractInstance(labels, []string{"resource"})
+	if got2 != "10.8.3.48" {
+		t.Errorf("有 instance 标签时应取 instance=10.8.3.48，实际 %q", got2)
+	}
+	// 不同资源应产生不同的实例标识（保证 InstanceCount 能正确去重计数）
+	huaweiOnly := map[string]string{"private_ip": "10.8.3.48", "resource_name": "node-0001"}
+	other := map[string]string{"private_ip": "10.8.3.49", "resource_name": "node-0002"}
+	if extractInstance(other, []string{"resource"}) == extractInstance(huaweiOnly, []string{"resource"}) {
+		t.Error("不同 private_ip 应产生不同实例标识")
+	}
+}
+
 func TestIncidentHashKeyStable(t *testing.T) {
 	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
-	k1 := incidentHashKey("CPU高", base)
-	k2 := incidentHashKey("CPU高", base)
+	k1 := incidentHashKey("CPU高", "ongoing", base)
+	k2 := incidentHashKey("CPU高", "ongoing", base)
 	if k1 != k2 {
 		t.Errorf("相同输入应产生相同 hash，实际 %s vs %s", k1, k2)
 	}
-	k3 := incidentHashKey("内存高", base)
+	k3 := incidentHashKey("内存高", "ongoing", base)
 	if k1 == k3 {
 		t.Error("不同 alertname 应产生不同 hash")
 	}
-	k4 := incidentHashKey("CPU高", base.Add(time.Minute))
+	k4 := incidentHashKey("CPU高", "ongoing", base.Add(time.Minute))
 	if k1 == k4 {
 		t.Error("不同 firstFiredAt 应产生不同 hash")
+	}
+	// 回归：同一 alertname 的 ongoing 与 resolved 必须是两个不同 key，
+	// 否则前端下钻会串故障（用户反馈"告警中包含已恢复"的配套问题）。
+	k5 := incidentHashKey("CPU高", "resolved", base)
+	if k1 == k5 {
+		t.Error("相同 alertname 不同 state 应产生不同 hash")
+	}
+}
+
+func TestAggregateIncidentsSeparatesOngoingAndResolved(t *testing.T) {
+	base := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	cfg := denoiseConfig{WindowMinutes: 60, StormThreshold: 0, ResourceLabels: []string{"instance"}}
+	alerts := []alertInstance{
+		{Fingerprint: "fp1", RuleName: "CPU高", State: "ongoing", Severity: "warning",
+			FirstFiredAt: base, LastEventAt: base.Add(5 * time.Minute),
+			Labels: map[string]string{"instance": "10.0.0.1"}},
+		{Fingerprint: "fp2", RuleName: "CPU高", State: "resolved", Severity: "warning",
+			FirstFiredAt: base.Add(time.Minute), LastEventAt: base.Add(8 * time.Minute),
+			Labels: map[string]string{"instance": "10.0.0.2"}},
+	}
+	all := aggregateIncidents(alerts, cfg, map[string]incidentSupplements{})
+	if len(all) != 2 {
+		t.Fatalf("ongoing 与 resolved 应聚成两个故障，实际 %d", len(all))
+	}
+	for _, inc := range all {
+		if len(inc.Alerts) != 1 {
+			t.Errorf("故障[%s/%s] 应只含 1 条明细，实际 %d", inc.Alertname, inc.State, len(inc.Alerts))
+		}
+		for _, a := range inc.Alerts {
+			if a.State != inc.State {
+				t.Errorf("故障状态=%s 却混入明细状态=%s（告警中包含已恢复）", inc.State, a.State)
+			}
+		}
 	}
 }
 

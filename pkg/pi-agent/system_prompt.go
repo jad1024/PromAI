@@ -9,14 +9,13 @@ import (
 )
 
 func BuildSystemPrompt(cfg *config.Config, db *gorm.DB, skills []Skill) string {
-	var dsCount int64
-	db.Model(&databaseDataSource{}).Count(&dsCount)
-
-	var typeCount int64
-	db.Model(&databaseMetricType{}).Count(&typeCount)
-
-	var tmplCount int64
-	db.Model(&databaseInspectionTemplate{}).Count(&tmplCount)
+	// db 为空时跳过统计（健壮性保护：生产路径必然非空，便于无数据库环境下测试构造）。
+	var dsCount, typeCount, tmplCount int64
+	if db != nil {
+		db.Model(&databaseDataSource{}).Count(&dsCount)
+		db.Model(&databaseMetricType{}).Count(&typeCount)
+		db.Model(&databaseInspectionTemplate{}).Count(&tmplCount)
+	}
 
 	prompt := fmt.Sprintf(`你是一个专业的监控运维 AI 助手，负责管理 PromAI 监控巡检系统。
 

@@ -62,8 +62,12 @@ func (t *ListReportsTool) Execute(ctx context.Context, params map[string]any, on
 	normalizedStatus := normalizeReportStatus(status)
 	dsKeywords := t.resolveDatasourceKeywords(ds)
 
+	// 只取列表所需元数据：report_records.metrics_json 单条可达 ~670KB，
+	// 全表 SELECT * 会把数 GB 数据读进内存导致 OOM。
 	var records []ReportRecord
-	t.db.Model(&ReportRecord{}).Order("created_at desc").Find(&records)
+	t.db.Model(&ReportRecord{}).
+		Select("id, title, datasource_name, file_path, file_size, total_metrics, alert_count, critical_count, warning_count, status, created_at").
+		Order("created_at desc").Find(&records)
 	records = filterReportRecords(records, dsKeywords, normalizedStatus)
 	records = dedupeReportRecords(records)
 	total := int64(len(records))
@@ -83,7 +87,8 @@ func (t *ListReportsTool) Execute(ctx context.Context, params map[string]any, on
 
 	if len(pageRecords) == 0 && normalizedStatus == "" {
 		var inspectRecords []InspectRecord
-		t.db.Model(&InspectRecord{}).Order("created_at desc").Find(&inspectRecords)
+		// 只取最近 500 条做回退，避免全表扫描拖垮 Agent（历史超万条时曾触发 OOM）。
+		t.db.Model(&InspectRecord{}).Order("created_at desc").Limit(500).Find(&inspectRecords)
 		inspectRecords = filterInspectRecords(inspectRecords, dsKeywords)
 		inspectRecords = dedupeInspectRecords(inspectRecords)
 		if len(inspectRecords) == 0 {

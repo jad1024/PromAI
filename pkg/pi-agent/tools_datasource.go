@@ -77,6 +77,7 @@ func (t *ListDatasourcesTool) Execute(ctx context.Context, params map[string]any
 // DB is a subset of *gorm.DB used by tools to avoid direct gorm import
 type DB interface {
 	Model(value any) DB
+	Select(query any, args ...any) DB
 	Where(query any, args ...any) DB
 	Order(value any) DB
 	Count(count *int64) DB

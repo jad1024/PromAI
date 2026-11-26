@@ -18,10 +18,34 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '控制台', icon: 'Odometer' },
   },
   {
+    path: '/pipeline',
+    name: 'Pipeline',
+    component: () => import('../views/Pipeline.vue'),
+    meta: { title: '告警驱动巡检', icon: 'Connection' },
+  },
+  {
     path: '/bi',
     name: 'BI',
     component: () => import('../views/BI.vue'),
     meta: { title: '健康大屏', icon: 'DataAnalysis' },
+  },
+  {
+    path: '/firemap',
+    name: 'Firemap',
+    component: () => import('../views/Firemap.vue'),
+    meta: { title: '灭火图', icon: 'Aim' },
+  },
+  {
+    path: '/polaris',
+    name: 'Polaris',
+    component: () => import('../views/Polaris.vue'),
+    meta: { title: '北极星', icon: 'Star' },
+  },
+  {
+    path: '/eventwall',
+    name: 'EventWall',
+    component: () => import('../views/EventWall.vue'),
+    meta: { title: '事件墙', icon: 'Files' },
   },
   {
     path: '/datasources',
@@ -149,6 +173,18 @@ const routes: RouteRecordRaw[] = [
     name: 'AlertEvents',
     component: () => import('../views/AlertEvents.vue'),
     meta: { title: '事件聚合', icon: 'Files' },
+  },
+  {
+    path: '/log-analysis',
+    name: 'LogAnalysis',
+    component: () => import('../views/LogAnalysis.vue'),
+    meta: { title: '日志分析', icon: 'Search' },
+  },
+  {
+    path: '/trace-analysis',
+    name: 'TraceAnalysis',
+    component: () => import('../views/TraceAnalysis.vue'),
+    meta: { title: '链路分析', icon: 'Connection' },
   },
   {
     path: '/user-manual',

@@ -13,20 +13,20 @@ import (
 // 与 collectActiveAlerts 输出 prompt 字符串不同：本结构体供 pkg/report
 // 直接 JSON 序列化到 ChartData，由 templates/report.html 前端 JS 渲染。
 type InspectionAlertItem struct {
-	Severity        string            `json:"severity"`         // critical / warning / info / unknown
-	State           string            `json:"state"`            // firing / pending
-	Alertname       string            `json:"alertname"`        // 优先取 AlertRule.Name，回退 labels.alertname
-	Source          string            `json:"source"`           // 数据源 / 外部告警源 显示名（"名称(type)"）
-	Duration        string            `json:"duration"`         // 已持续时长（人类可读）
-	ActiveAt        time.Time         `json:"active_at"`
-	Value           float64           `json:"value,omitempty"`
-	Threshold       float64           `json:"threshold,omitempty"`
-	Labels          map[string]string `json:"labels"`           // 完整 labels（键值字符串）
-	Annotations     map[string]string `json:"annotations"`      // 完整 annotations
-	Expected        string            `json:"expected,omitempty"` // 命中的预期行为规则名（如 "实时流Redis"）；空表示不命中
-	DatasourceID    uint              `json:"datasource_id"`
-	ExternalSourceID uint             `json:"external_source_id,omitempty"`
-	RuleID          uint              `json:"rule_id"`
+	Severity         string            `json:"severity"`  // critical / warning / info / unknown
+	State            string            `json:"state"`     // firing / pending
+	Alertname        string            `json:"alertname"` // 优先取 AlertRule.Name，回退 labels.alertname
+	Source           string            `json:"source"`    // 数据源 / 外部告警源 显示名（"名称(type)"）
+	Duration         string            `json:"duration"`  // 已持续时长（人类可读）
+	ActiveAt         time.Time         `json:"active_at"`
+	Value            float64           `json:"value,omitempty"`
+	Threshold        float64           `json:"threshold,omitempty"`
+	Labels           map[string]string `json:"labels"`             // 完整 labels（键值字符串）
+	Annotations      map[string]string `json:"annotations"`        // 完整 annotations
+	Expected         string            `json:"expected,omitempty"` // 命中的预期行为规则名（如 "实时流Redis"）；空表示不命中
+	DatasourceID     uint              `json:"datasource_id"`
+	ExternalSourceID uint              `json:"external_source_id,omitempty"`
+	RuleID           uint              `json:"rule_id"`
 }
 
 // InspectionIncidentRow 表示聚合后的一行故障（按 alertname 汇总）。
@@ -35,13 +35,13 @@ type InspectionIncidentRow struct {
 	Severity      string `json:"severity"` // 取该故障下实例最严重等级
 	InstanceCount int    `json:"instance_count"`
 	SourceCount   int    `json:"source_count"`
-	IsStorm       bool   `json:"is_storm"`     // 达到风暴阈值
+	IsStorm       bool   `json:"is_storm"`       // 达到风暴阈值
 	ExpectedCount int    `json:"expected_count"` // 命中预期行为的实例数
 }
 
 // AlertSummary 是给报告用的告警聚合视图。
 type AlertSummary struct {
-	SourceFilterLabel string                 `json:"source_filter_label"` // "按告警源过滤：[名称A][名称B]" / "全部告警源"
+	SourceFilterLabel string                  `json:"source_filter_label"` // "按告警源过滤：[名称A][名称B]" / "全部告警源"
 	Alerts            []InspectionAlertItem   `json:"alerts"`
 	Incidents         []InspectionIncidentRow `json:"incidents"`
 	TotalFiring       int                     `json:"total_firing"`
@@ -219,10 +219,10 @@ func CollectInspectionAlertData(max int, alertSourceIDs []uint) *AlertSummary {
 	var allInsts []database.AlertInstance
 	if err := q2.Order("active_at desc").Limit(500).Find(&allInsts).Error; err == nil && len(allInsts) > 0 {
 		type bucket struct {
-			severity       string
-			instanceCount  int
-			sources        map[string]struct{}
-			expectedCount  int
+			severity      string
+			instanceCount int
+			sources       map[string]struct{}
+			expectedCount int
 		}
 		buckets := make(map[string]*bucket)
 		sevRank := map[string]int{"critical": 3, "warning": 2, "info": 1, "unknown": 0}

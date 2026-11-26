@@ -209,9 +209,41 @@ func setHealthCache(dsID string, data map[string]interface{}) {
 	healthCache[dsID] = data
 }
 
+// reportSnapshotColumns 只取健康快照需要的列。
+// 关键：report_records.metrics_json 单条可达 ~670KB，全表 3209 条约 2.8GB，
+// 启动时若 SELECT * 全部读入内存会直接 OOM。这里显式排除大字段。
+const reportSnapshotColumns = "id, datasource_name, created_at, metrics_json"
+
+// reportMetaColumns 报告列表/看板只需要元数据，不含 metrics_json / template_ids 大字段。
+// 列表分页与看板查询必须带 Select，否则 GORM 默认 SELECT * 会把 2.8GB 大字段读入内存。
+const reportMetaColumns = "id, title, datasource_id, datasource_name, file_path, file_size, " +
+	"total_metrics, alert_count, critical_count, warning_count, status, duration, " +
+	"trigger_type, cron_job_id, inspect_task_id, template_names, created_at"
+
 func loadLatestReports() {
+	// 只取每个数据源最新一条（而非全部报告）。用 GROUP BY 让 SQLite 在库内完成筛选，
+	// 进入 Go 内存的只有「每个数据源 × 1 条」快照，与报告总数无关。
+	var latestIDs []uint
+	if err := database.DB.Model(&database.ReportRecord{}).
+		Select("MAX(id) AS id").
+		Where("metrics_json != '' AND metrics_json IS NOT NULL").
+		Group("datasource_name").
+		Pluck("id", &latestIDs).Error; err != nil {
+		log.Printf("Warning: 加载最新巡检快照失败: %v", err)
+		return
+	}
+	if len(latestIDs) == 0 {
+		log.Printf("已加载 0 个数据源的最新巡检快照")
+		return
+	}
+
 	var records []database.ReportRecord
-	database.DB.Where("metrics_json != ''").Order("created_at desc").Find(&records)
+	if err := database.DB.Select(reportSnapshotColumns).
+		Where("id IN ?", latestIDs).
+		Find(&records).Error; err != nil {
+		log.Printf("Warning: 加载最新巡检快照失败: %v", err)
+		return
+	}
 	seen := make(map[string]bool)
 	for _, r := range records {
 		key := r.DatasourceName
@@ -224,7 +256,22 @@ func loadLatestReports() {
 			setLatestReport(key, &snapshot)
 		}
 	}
-	log.Printf("已加载 %d 个数据源的最新巡检快照", len(seen))
+	log.Printf("已加载 %d 个数据源的最新巡检快照（从 %d 条报告中筛选）", len(seen), len(records))
+}
+
+// latestReportIDsByNames 用 GROUP BY 在 SQLite 内筛出每个数据源最新的报告 ID。
+// 避免按 datasource_name IN (...) 拉回每个数据源的全部历史报告（OOM 根因之一）。
+func latestReportIDsByNames(names []string) []uint {
+	ids := make([]uint, 0, len(names))
+	if len(names) == 0 {
+		return ids
+	}
+	database.DB.Model(&database.ReportRecord{}).
+		Select("MAX(id) AS id").
+		Where("datasource_name IN ?", names).
+		Group("datasource_name").
+		Pluck("id", &ids)
+	return ids
 }
 
 func populateDatasourceHealthFields(datasources []database.DataSource) {
@@ -239,9 +286,9 @@ func populateDatasourceHealthFields(datasources []database.DataSource) {
 	}
 
 	reportMap := make(map[string]database.ReportRecord, len(datasources))
-	if len(urls) > 0 {
+	if ids := latestReportIDsByNames(urls); len(ids) > 0 {
 		var latestRecords []database.ReportRecord
-		database.DB.Where("datasource_name IN ?", urls).Order("created_at desc").Find(&latestRecords)
+		database.DB.Select(reportMetaColumns).Where("id IN ?", ids).Find(&latestRecords)
 		for _, r := range latestRecords {
 			if _, ok := reportMap[r.DatasourceName]; !ok {
 				reportMap[r.DatasourceName] = r
@@ -361,6 +408,7 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/cronjobs", logged(auth(a.handleCronJobs)))
 	mux.HandleFunc("/api/promai/cronjobs/", logged(auth(a.handleCronJobByID)))
 	mux.HandleFunc("/api/promai/report-records", logged(auth(a.handleReports)))
+	mux.HandleFunc("/api/promai/report-records/batch-delete", logged(auth(a.handleReportBatchDelete)))
 	mux.HandleFunc("/api/promai/report-records/", logged(auth(a.handleReportByID)))
 	mux.HandleFunc("/api/promai/metrics/types", logged(auth(a.handleMetricTypes)))
 	mux.HandleFunc("/api/promai/metrics/types/", logged(auth(a.handleMetricTypeByID)))
@@ -374,6 +422,7 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/settings", logged(auth(a.handleSettings)))
 	mux.HandleFunc("/api/promai/inspect", logged(auth(a.handleInspect)))
 	mux.HandleFunc("/api/promai/inspect/records", logged(auth(a.handleInspectRecords)))
+	mux.HandleFunc("/api/promai/inspect/records/batch-delete", logged(auth(a.handleInspectRecordBatchDelete)))
 	mux.HandleFunc("/api/promai/inspect/task/", logged(auth(a.handleInspectTask)))
 	// ===== 敏感端口扫描 =====
 	mux.HandleFunc("/api/promai/portscan", logged(auth(a.handlePortScanCreate)))
@@ -386,6 +435,11 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/ai/skills", logged(auth(a.handleAISkills)))
 	mux.HandleFunc("/api/promai/ai/skills/", logged(auth(a.handleAISkillByName)))
 	log.Printf("[AdminAPI] Skills 路由已注册: manifest/stats/skills/skills/")
+	// PromAI 核心链路 + AI 效果评估
+	mux.HandleFunc("/api/promai/pipeline/overview", logged(auth(a.handlePipelineOverview)))
+	mux.HandleFunc("/api/promai/ai/feedback", logged(auth(a.handleAIFeedback)))
+	mux.HandleFunc("/api/promai/ai/feedback/sources", logged(auth(a.handleAIFeedbackSources)))
+	mux.HandleFunc("/api/promai/ai/effectiveness", logged(auth(a.handleAIEffectiveness)))
 	mux.HandleFunc("/api/promai/dashboard/stats", logged(auth(a.handleDashboardStats)))
 	mux.HandleFunc("/api/promai/dashboard/health", logged(auth(a.handleDashboardHealth)))
 	mux.HandleFunc("/api/promai/dashboard/health/trend", logged(auth(a.handleDashboardHealthTrend)))
@@ -427,6 +481,16 @@ func (a *AdminAPI) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/promai/webhook/alerts/", logged(a.handleExternalWebhook))
 	mux.HandleFunc("/api/promai/alert-sources", logged(auth(a.handleAlertSources)))
 	mux.HandleFunc("/api/promai/alert-sources/", logged(auth(a.handleAlertSourceByID)))
+
+	// ===== 灭火图（Firemap）：场景层 · 服务树健康分与 FlashAI 定向诊断 ==========
+	a.registerFiremapHandlers(mux)
+	a.registerFiremapExtraHandlers(mux)
+
+	// ===== 北极星（Polaris）：场景层 · 业务核心指标故障发现入口 =====
+	a.registerPolarisHandlers(mux)
+
+	// ===== 日志分析 / 链路分析（VictoriaLogs + traceId 串联） =====
+	a.registerLogAnalysisHandlers(mux)
 
 	log.Printf("[AdminAPI] 管理接口已注册")
 }
@@ -1340,7 +1404,7 @@ func (a *AdminAPI) handleReports(w http.ResponseWriter, r *http.Request) {
 		query.Count(&total)
 
 		var reports []database.ReportRecord
-		query.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&reports)
+		query.Select(reportMetaColumns).Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&reports)
 
 		writeJSON(w, map[string]interface{}{
 			"items":     reports,
@@ -1362,7 +1426,7 @@ func (a *AdminAPI) handleReportByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "DELETE":
 		var rec database.ReportRecord
-		if database.DB.First(&rec, id).Error != nil {
+		if database.DB.Select("id, file_path, title").First(&rec, id).Error != nil {
 			writeError(w, 404, "报告不存在")
 			return
 		}
@@ -2934,7 +2998,7 @@ func (a *AdminAPI) handleDashboardStats(w http.ResponseWriter, r *http.Request) 
 	database.DB.Model(&database.NotificationChannel{}).Count(&notifCount)
 
 	var recentReports []database.ReportRecord
-	database.DB.Order("created_at desc").Limit(5).Find(&recentReports)
+	database.DB.Select(reportMetaColumns).Order("created_at desc").Limit(5).Find(&recentReports)
 
 	writeJSON(w, map[string]interface{}{
 		"total_datasources":   dsCount,
@@ -3011,7 +3075,9 @@ func (a *AdminAPI) handleDashboardHealth(w http.ResponseWriter, r *http.Request)
 		urls[i] = ds.URL
 	}
 	var latestRecords []database.ReportRecord
-	database.DB.Where("datasource_name IN ?", urls).Order("created_at desc").Find(&latestRecords)
+	if ids := latestReportIDsByNames(urls); len(ids) > 0 {
+		database.DB.Select(reportMetaColumns).Where("id IN ?", ids).Find(&latestRecords)
+	}
 	reportMap := make(map[string]database.ReportRecord, len(datasources))
 	for _, r := range latestRecords {
 		if _, ok := reportMap[r.DatasourceName]; !ok {
@@ -3084,10 +3150,8 @@ func (a *AdminAPI) handleDashboardHealth(w http.ResponseWriter, r *http.Request)
 			typeSummaries = append(typeSummaries, *typeMetrics[tn])
 		}
 
-		healthScore := 100.0
-		if snapshot.TotalMetrics > 0 {
-			healthScore = float64(snapshot.TotalMetrics-alerts) / float64(snapshot.TotalMetrics) * 100
-		}
+		// 统一走公共健康分函数（与灭火图同口径），公式未变：(总-alerts)/总×100
+		healthScore := CalcHealthScore(snapshot.TotalMetrics, alerts)
 
 		lastReportURL := ""
 		if lastReport.ID > 0 && lastReport.FilePath != "" {
@@ -3215,28 +3279,30 @@ func (a *AdminAPI) handleDashboardHealthTrend(w http.ResponseWriter, r *http.Req
 		Alerts       int    `json:"alerts"`
 	}
 
-	var records []database.ReportRecord
-	database.DB.Where("created_at >= ?", since).Order("created_at asc").Find(&records)
-
-	dailyMap := make(map[string]*DailyTrend)
-	dateKeys := make([]string, 0)
-
-	for _, rec := range records {
-		date := rec.CreatedAt.Format("2006-01-02")
-		if _, ok := dailyMap[date]; !ok {
-			dailyMap[date] = &DailyTrend{Date: date}
-			dateKeys = append(dateKeys, date)
-		}
-		d := dailyMap[date]
-		d.TotalMetrics += rec.TotalMetrics
-		d.Critical += rec.CriticalCount
-		d.Warning += rec.WarningCount
-		d.Alerts += rec.AlertCount
+	// 在 SQLite 内按天聚合，只回传 ≤90 行，避免把时间窗内全部报告拉进内存。
+	var rows []struct {
+		Date         string `gorm:"column:day"`
+		TotalMetrics int    `gorm:"column:total_metrics"`
+		Critical     int    `gorm:"column:critical"`
+		Warning      int    `gorm:"column:warning"`
+		Alerts       int    `gorm:"column:alerts"`
 	}
+	database.DB.Model(&database.ReportRecord{}).
+		Select("strftime('%Y-%m-%d', created_at) AS day, " +
+			"SUM(total_metrics) AS total_metrics, SUM(critical_count) AS critical, " +
+			"SUM(warning_count) AS warning, SUM(alert_count) AS alerts").
+		Where("created_at >= ?", since).
+		Group("day").Order("day asc").Scan(&rows)
 
-	trend := make([]DailyTrend, 0, len(dateKeys))
-	for _, k := range dateKeys {
-		trend = append(trend, *dailyMap[k])
+	trend := make([]DailyTrend, 0, len(rows))
+	for _, row := range rows {
+		trend = append(trend, DailyTrend{
+			Date:         row.Date,
+			TotalMetrics: row.TotalMetrics,
+			Critical:     row.Critical,
+			Warning:      row.Warning,
+			Alerts:       row.Alerts,
+		})
 	}
 
 	writeJSON(w, map[string]interface{}{

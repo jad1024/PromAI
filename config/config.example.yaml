@@ -987,3 +987,12 @@ metric_types:
           instance: "地址"
           job: "服务对应exporter命名"
           service: "服务名"
+
+
+# ===== 日志分析 / 链路分析（VictoriaLogs） =====
+# 也可用容器环境变量 PROMAI_VICTORIALOGS_URL 覆盖，无需改此文件。
+# 日志分析页：查询栏 + 直方图 + 字段侧栏；链路分析页：按 traceId 串日志。
+log_analysis:
+  victorialogs:
+    url: ""        # 例如 http://192.168.3.123:9428
+    timeout: 15s
